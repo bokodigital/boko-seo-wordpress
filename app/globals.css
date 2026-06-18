@@ -105,6 +105,9 @@ textarea.desc{min-height:70px}
 
 .foot{color:var(--muted);font-size:11px;text-align:center;padding:18px 0 4px}
 
+.pager{display:flex;align-items:center;justify-content:center;gap:14px;margin:18px 0 4px;flex-wrap:wrap}
+.pager .pginfo{font-size:12.5px;font-weight:600;color:var(--muted)}
+
 /* Connect screen */
 .gate{max-width:430px;margin:72px auto;background:var(--white);border:1px solid var(--line);border-radius:18px;padding:30px;box-shadow:0 12px 34px -18px rgba(15,18,28,.28)}
 .gate .badge{margin-bottom:14px}
