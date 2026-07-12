@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useDeferredValue } from "react";
 
 const TITLE_MIN = 50, TITLE_MAX = 60, DESC_MIN = 150, DESC_MAX = 160;
 const PAGE_SIZE = 10;
@@ -49,6 +49,22 @@ function counterClass(len, min, max) {
   return len >= min && len <= max ? "ok" : "warn";
 }
 
+// --- Search ---------------------------------------------------------------
+// Matches on title, slug/handle and full URL. Multiple words = AND (all must
+// appear somewhere), so "blue shirt" finds "Blue Linen Shirt".
+function matchesQuery(item, q) {
+  if (!q) return true;
+  const hay = [item.title, item.handle, item.link, item.blogTitle]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return q
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+    .every((t) => hay.includes(t));
+}
+
 export default function Page() {
   const [data, setData] = useState({ pages: [], posts: [], postCategories: [], products: [], productCategories: [] });
   const [site, setSite] = useState({ name: "", seo: "none", woocommerce: false });
@@ -60,6 +76,7 @@ export default function Page() {
   const [toast, setToast] = useState("");
   const [busyAll, setBusyAll] = useState(false);
   const [page, setPage] = useState(1);
+  const [queries, setQueries] = useState({}); // search text, kept per tab
 
   // connect form
   const [fSite, setFSite] = useState("");
@@ -191,7 +208,22 @@ export default function Page() {
     [patchItem, showToast]
   );
 
-  const items = data[activeTab] || [];
+  const allItems = data[activeTab] || [];
+  const query = queries[activeTab] || "";
+  const deferredQuery = useDeferredValue(query);
+
+  const setQuery = useCallback((v) => {
+    setQueries((prev) => ({ ...prev, [activeTab]: v }));
+    setPage(1);
+  }, [activeTab]);
+
+  // Everything below (bulk actions, counts, pager) works off the FILTERED list,
+  // so "Generate all" / "Import all" act on what the user can actually see.
+  const items = useMemo(
+    () => (deferredQuery ? allItems.filter((i) => matchesQuery(i, deferredQuery)) : allItems),
+    [allItems, deferredQuery]
+  );
+
   const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
   const pageItems = items.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
@@ -289,6 +321,30 @@ export default function Page() {
             ))}
           </div>
 
+          {!loading && !loadError && allItems.length > 0 && (
+            <div className="searchbar">
+              <div className="search-input">
+                <span className="ico">⌕</span>
+                <input
+                  type="search"
+                  value={query}
+                  placeholder={`Search ${activeLabel} by title or URL…`}
+                  aria-label={`Search ${activeLabel} by title or URL`}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Escape") setQuery(""); }}
+                />
+                {query && (
+                  <button className="clear" onClick={() => setQuery("")} aria-label="Clear search">×</button>
+                )}
+              </div>
+              {query && (
+                <span className="search-count">
+                  <b>{items.length}</b> of {allItems.length} match
+                </span>
+              )}
+            </div>
+          )}
+
           {!loading && !loadError && items.length > 0 && (
             <div className="toolbar">
               <button className="btn primary" onClick={fixIssues} disabled={busyAll || !counts.issues}>
@@ -333,7 +389,18 @@ export default function Page() {
           )}
 
           {!loading && !loadError && items.length === 0 && (
-            <div className="empty">No {activeLabel} found on this site.</div>
+            <div className="empty">
+              {query ? (
+                <>
+                  No {activeLabel} match &ldquo;{query}&rdquo;.
+                  <div style={{ marginTop: 14 }}>
+                    <button className="btn ghost sm" onClick={() => setQuery("")}>Clear search</button>
+                  </div>
+                </>
+              ) : (
+                <>No {activeLabel} found on this site.</>
+              )}
+            </div>
           )}
 
           {!loading && !loadError &&
