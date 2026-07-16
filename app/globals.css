@@ -129,3 +129,13 @@ textarea.desc{min-height:70px}
 .search-input .clear:hover{background:var(--ink);color:var(--white)}
 .search-count{font-size:12.5px;font-weight:600;color:var(--muted);white-space:nowrap}
 .search-count b{color:var(--ink)}
+
+/* Free-tier gate: upgrade banner + locked item cards */
+.upgrade-banner{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;background:var(--ink);color:var(--white);border-radius:14px;padding:14px 18px;margin-bottom:16px}
+.upgrade-banner .upgrade-copy{font-size:13px;line-height:1.45;max-width:70ch}
+.upgrade-banner .upgrade-copy b{color:var(--lime)}
+.upgrade-banner .btn.primary{white-space:nowrap}
+.card.locked{opacity:.9;border-style:dashed;background:linear-gradient(0deg,var(--lilac),var(--lilac))}
+.card.locked .card-title{color:var(--muted)}
+.status-pill.st-locked{background:var(--ink);color:var(--lime)}
+.lock-note{font-size:12.5px;color:var(--muted);background:var(--lilac);border:1px dashed var(--line);border-radius:10px;padding:9px 12px;margin:8px 0}
