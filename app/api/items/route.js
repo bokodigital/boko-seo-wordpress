@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { wpGet } from "@/lib/wp";
+import { applyGate } from "@/lib/gate";
 
 export const dynamic = "force-dynamic";
 
@@ -26,14 +27,26 @@ export async function GET(request) {
   try {
     const d = await wpGet(session, "/items");
     const groups = d.groups || {};
+
+    const pages = decorate("pages", groups.pages);
+    const posts = decorate("posts", groups.posts);
+    const postCategories = decorate("postCategories", groups.postCategories);
+    const products = decorate("products", groups.products);
+    const productCategories = decorate("productCategories", groups.productCategories);
+
+    // Free-tier gate: first 100 items across ALL types are free; the rest are
+    // tagged `locked`. Order here decides which items land in the free 100.
+    const gate = applyGate([pages, posts, postCategories, products, productCategories]);
+
     return NextResponse.json({
       connected: true,
       site: { name: d.site || session.site, seo: d.seo, woocommerce: d.woocommerce },
-      pages: decorate("pages", groups.pages),
-      posts: decorate("posts", groups.posts),
-      postCategories: decorate("postCategories", groups.postCategories),
-      products: decorate("products", groups.products),
-      productCategories: decorate("productCategories", groups.productCategories),
+      pages,
+      posts,
+      postCategories,
+      products,
+      productCategories,
+      gate,
     });
   } catch (e) {
     return NextResponse.json({ error: e.message || String(e) }, { status: e.status || 500 });
