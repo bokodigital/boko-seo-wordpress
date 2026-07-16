@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { FREE_LIMIT, upgradeUrl } from "@/lib/gate";
 import { getSession } from "@/lib/session";
 import { wpPost } from "@/lib/wp";
 
@@ -17,7 +18,18 @@ export async function POST(request) {
   } catch (e) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
-  const { type, id, metaTitle, metaDescription } = body || {};
+  const { type, id, metaTitle, metaDescription, locked } = body || {};
+
+  // Free-tier gate: items beyond the free first-100 are locked.
+  if (locked) {
+    return NextResponse.json(
+      {
+        error: `Your free plan covers the first ${FREE_LIMIT} items. Upgrade with Boko to optimise the rest.`,
+        upgradeUrl: upgradeUrl(),
+      },
+      { status: 402 }
+    );
+  }
   if (!VALID.includes(type) || !id || !metaTitle) {
     return NextResponse.json({ error: "type, id and metaTitle are required." }, { status: 400 });
   }
