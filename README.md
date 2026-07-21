@@ -104,3 +104,31 @@ the buttons alone.
 - **Where "Upgrade" links to:** set the optional env var **`UPGRADE_URL`**
   (defaults to `https://www.boko.com.au/upgrade`). Point it at your Boko upgrade /
   checkout / enquiry page.
+---
+
+## Membership (one-time unlock via licence key)
+
+Paid customers unlock the full item set with a **licence key** — no database and no
+login. A key is an HMAC signature bound to the customer's connected domain, so a key
+issued for one site/store can't be reused on another.
+
+**Setup (once):**
+
+- Set a strong `LICENSE_SECRET` env var on this app's Vercel deployment
+  (`openssl rand -hex 32`). Keep it private. If it's unset, no key can ever validate
+  (the gate stays closed).
+
+**Issuing a key (after a customer's one-time Stripe purchase):**
+
+```bash
+LICENSE_SECRET=<same value as Vercel> node tools/generate-license.mjs <their-domain>
+# e.g. node tools/generate-license.mjs their-store.myshopify.com
+```
+
+Give the printed key to the customer.
+
+**Customer redeems it:** in the app, once they're over the free limit, they paste the
+key into the **"Already purchased? Paste licence key"** box and click **Unlock**. The
+server (`/api/license`) verifies it against the domain they're actually connected to,
+stores it in their encrypted session, and every item unlocks. The check is re-run on
+each request (`/api/items`), so it can't be faked by editing the page.
