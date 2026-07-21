@@ -481,7 +481,7 @@ function ItemCard({ item, onGenerate, onImport, onEdit, upgradeUrl }) {
           <span className="status-pill st-locked">🔒 Locked</span>
         </div>
         <div className="audit">{chip(a.title)}{chip(a.desc)}</div>
-        <div className="lock-note">On the free plan only your first 100 items can be optimised. Upgrade with Boko to unlock this one.</div>
+        <div className="lock-note">On the free plan only your first 10 items can be optimised. Upgrade with Boko to unlock this one.</div>
         <div className="card-actions">
           <a className="btn primary sm" href={upgradeUrl} target="_blank" rel="noopener noreferrer">🔒 Upgrade to optimise</a>
         </div>
