@@ -86,11 +86,11 @@ Pages · Posts · Post categories · WooCommerce products* · WooCommerce produc
 Next.js 14 (App Router) · React 18 · WordPress REST (Application Passwords) · companion PHP plugin · Poppins via `next/font`.
 ---
 
-## Free tier & upgrades (100-item limit)
+## Free tier & upgrades (10-item limit)
 
-The Studio is free for the **first 100 items across all content types combined**
+The Studio is free for the **first 10 items across all content types combined**
 (pages, posts/articles, categories, products, product categories/collections).
-Once a connected site has **more than 100 items**, everything beyond the first 100
+Once a connected site has **more than 10 items**, everything beyond the first 10
 is **locked**: those cards show an **Upgrade** button instead of Generate/Import,
 and "Generate all" / "Fix issues" / "Import all" only act on the free items.
 
