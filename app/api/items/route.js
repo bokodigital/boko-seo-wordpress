@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { wpGet } from "@/lib/wp";
 import { applyGate } from "@/lib/gate";
+import { verifyLicense } from "@/lib/license";
 
 export const dynamic = "force-dynamic";
 
@@ -34,9 +35,11 @@ export async function GET(request) {
     const products = decorate("products", groups.products);
     const productCategories = decorate("productCategories", groups.productCategories);
 
-    // Free-tier gate: first 100 items across ALL types are free; the rest are
-    // tagged `locked`. Order here decides which items land in the free 100.
-    const gate = applyGate([pages, posts, postCategories, products, productCategories]);
+    // Paid members (valid licence for this site) get everything unlocked;
+    // otherwise the first FREE_LIMIT items across ALL types are free and the
+    // rest are tagged `locked`. Order here decides which land in the free tier.
+    const member = verifyLicense(session.license, session.site);
+    const gate = applyGate([pages, posts, postCategories, products, productCategories], { member });
 
     return NextResponse.json({
       connected: true,
