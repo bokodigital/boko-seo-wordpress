@@ -78,6 +78,8 @@ export default function Page() {
   const [page, setPage] = useState(1);
   const [queries, setQueries] = useState({}); // search text, kept per tab
   const [gate, setGate] = useState(null); // free-tier gate metadata
+  const [licenseKey, setLicenseKey] = useState("");
+  const [licenseErr, setLicenseErr] = useState("");
 
   // connect form
   const [fSite, setFSite] = useState("");
@@ -157,6 +159,26 @@ export default function Page() {
       setConnecting(false);
     }
   }, [fSite, fUser, fPass, load]);
+
+  const activateLicense = useCallback(async () => {
+    const key = licenseKey.trim();
+    if (!key) return;
+    setLicenseErr("");
+    try {
+      const res = await fetch("/api/license", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key }),
+      });
+      const d = await res.json();
+      if (!res.ok || !d.active) throw new Error(d.error || "Invalid licence key.");
+      setLicenseKey("");
+      showToast("Membership activated \u2014 everything unlocked.");
+      await load();
+    } catch (e) {
+      setLicenseErr(e.message || String(e));
+    }
+  }, [licenseKey, load, showToast]);
 
   const patchItem = useCallback((type, id, patch) => {
     setData((prev) => ({
@@ -325,13 +347,31 @@ export default function Page() {
             ))}
           </div>
 
+          {gate && gate.member && (
+            <div className="member-banner">✓ Membership active — all {gate.total} items are unlocked.</div>
+          )}
+
           {gate && gate.locked && (
             <div className="upgrade-banner">
               <div className="upgrade-copy">
                 <b>You&apos;re on the free plan.</b> The first {gate.freeLimit} items are free to optimise.{" "}
                 {gate.lockedCount} more {gate.lockedCount === 1 ? "item is" : "items are"} locked across your site.
               </div>
-              <a className="btn primary sm" href={gate.upgradeUrl} target="_blank" rel="noopener noreferrer">Upgrade with Boko ▸</a>
+              <div className="upgrade-actions">
+                <a className="btn primary sm" href={gate.upgradeUrl} target="_blank" rel="noopener noreferrer">Upgrade with Boko ▸</a>
+                <div className="license-form">
+                  <input
+                    type="text"
+                    value={licenseKey}
+                    placeholder="Already purchased? Paste licence key"
+                    aria-label="Licence key"
+                    onChange={(e) => setLicenseKey(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") activateLicense(); }}
+                  />
+                  <button className="btn dark sm" onClick={activateLicense}>Unlock</button>
+                </div>
+              </div>
+              {licenseErr && <div className="license-err">⚠ {licenseErr}</div>}
             </div>
           )}
 
