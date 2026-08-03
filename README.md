@@ -132,3 +132,8 @@ key into the **"Already purchased? Paste licence key"** box and click **Unlock**
 server (`/api/license`) verifies it against the domain they're actually connected to,
 stores it in their encrypted session, and every item unlocks. The check is re-run on
 each request (`/api/items`), so it can't be faked by editing the page.
+**Internal team unlock (Boko):** set `INTERNAL_UNLOCK_KEY` on Vercel to any strong
+shared secret. Anyone who pastes that exact value into the licence box unlocks the
+app on **any** connected site/store — no per-domain key needed. Use it for internal
+work across client sites; keep it private and rotate it if it leaks. Leave it unset
+to disable internal unlock entirely.
