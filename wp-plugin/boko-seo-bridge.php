@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Boko SEO Bridge
- * Description: Exposes a simple, SEO-plugin-agnostic REST API for the Boko SEO Meta Studio to read and write meta titles & descriptions across posts, pages, post categories, and (if active) WooCommerce products and product categories. Compatible with Yoast SEO, Rank Math, or standalone.
- * Version: 1.0.0
+ * Description: Exposes a simple, SEO-plugin-agnostic REST API for the Boko SEO Meta Studio to read and write meta titles & descriptions across posts, pages, post categories, and (if active) WooCommerce products and product categories, plus image alt text across the media library. Compatible with Yoast SEO, Rank Math, or standalone.
+ * Version: 1.1.0
  * Author: Boko Digital
  */
 
@@ -11,6 +11,8 @@ if (!defined('ABSPATH')) { exit; }
 class Boko_SEO_Bridge {
 
     const LIMIT = 100;
+    const VERSION = '1.1.0';
+    const IMAGE_LIMIT = 100;
 
     public static function init() {
         add_action('rest_api_init', array(__CLASS__, 'register_routes'));
@@ -39,6 +41,17 @@ class Boko_SEO_Bridge {
             'callback' => array(__CLASS__, 'route_update'),
             'permission_callback' => array(__CLASS__, 'permission'),
         ));
+        // v1.1.0 — image alt text
+        register_rest_route('boko-seo/v1', '/images', array(
+            'methods'  => 'GET',
+            'callback' => array(__CLASS__, 'route_images'),
+            'permission_callback' => array(__CLASS__, 'permission'),
+        ));
+        register_rest_route('boko-seo/v1', '/alt', array(
+            'methods'  => 'POST',
+            'callback' => array(__CLASS__, 'route_alt'),
+            'permission_callback' => array(__CLASS__, 'permission'),
+        ));
     }
 
     public static function permission() {
@@ -48,6 +61,7 @@ class Boko_SEO_Bridge {
     public static function route_ping() {
         return array(
             'ok' => true,
+            'version' => self::VERSION,
             'seo' => self::detect_plugin(),
             'woocommerce' => class_exists('WooCommerce'),
         );
@@ -64,6 +78,7 @@ class Boko_SEO_Bridge {
         );
         return array(
             'site' => get_bloginfo('name'),
+            'version' => self::VERSION,
             'seo' => self::detect_plugin(),
             'woocommerce' => $woo,
             'groups' => $groups,
@@ -87,6 +102,124 @@ class Boko_SEO_Bridge {
             self::set_post_meta($id, $title, $desc);
         }
         return array('ok' => true);
+    }
+
+    /* ---------------- Images / alt text (v1.1.0) ---------------- */
+
+    /**
+     * List image attachments with no alt text.
+     * GET /boko-seo/v1/images?offset=0&limit=100
+     */
+    public static function route_images($request) {
+        $limit  = intval($request->get_param('limit'));
+        $offset = intval($request->get_param('offset'));
+        if ($limit <= 0 || $limit > 200) { $limit = self::IMAGE_LIMIT; }
+        if ($offset < 0) { $offset = 0; }
+
+        $q = new WP_Query(array(
+            'post_type'      => 'attachment',
+            'post_status'    => 'inherit',
+            'post_mime_type' => array('image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif'),
+            'posts_per_page' => $limit,
+            'offset'         => $offset,
+            'orderby'        => 'date',
+            'order'          => 'DESC',
+            'no_found_rows'  => false,
+            'meta_query'     => array(
+                'relation' => 'OR',
+                array('key' => '_wp_attachment_image_alt', 'compare' => 'NOT EXISTS'),
+                array('key' => '_wp_attachment_image_alt', 'value' => '', 'compare' => '='),
+            ),
+        ));
+
+        $items = array();
+        foreach ($q->posts as $att) {
+            $full  = wp_get_attachment_url($att->ID);
+            $thumb = wp_get_attachment_image_url($att->ID, 'medium');
+            $parent_id = intval($att->post_parent);
+            $parent_title = '';
+            $parent_type  = '';
+            $parent_link  = '';
+            if ($parent_id) {
+                $parent = get_post($parent_id);
+                if ($parent) {
+                    $parent_title = html_entity_decode(get_the_title($parent_id));
+                    $obj = get_post_type_object($parent->post_type);
+                    $parent_type = ($obj && isset($obj->labels->singular_name)) ? $obj->labels->singular_name : $parent->post_type;
+                    $parent_link = get_permalink($parent_id);
+                }
+            }
+            $items[] = array(
+                'id'          => $att->ID,
+                'url'         => $full,
+                'thumb'       => $thumb ? $thumb : $full,
+                'filename'    => wp_basename(get_attached_file($att->ID)),
+                'title'       => html_entity_decode($att->post_title),
+                'caption'     => html_entity_decode(wp_strip_all_tags($att->post_excerpt)),
+                'parentId'    => $parent_id,
+                'parentTitle' => $parent_title,
+                'parentType'  => $parent_type,
+                'parentLink'  => $parent_link,
+                'index'       => self::attachment_index($att->ID, $parent_id),
+                'editLink'    => get_edit_post_link($att->ID, 'raw'),
+            );
+        }
+
+        return array(
+            'version'  => self::VERSION,
+            'images'   => $items,
+            'offset'   => $offset,
+            'limit'    => $limit,
+            'total'    => intval($q->found_posts),
+            'hasMore'  => ($offset + count($items)) < intval($q->found_posts),
+        );
+    }
+
+    /**
+     * Save alt text for one attachment.
+     * POST /boko-seo/v1/alt  { id, alt }
+     */
+    public static function route_alt($request) {
+        $id  = intval($request->get_param('id'));
+        $alt = (string) $request->get_param('alt');
+        $alt = trim(preg_replace('/\s+/', ' ', wp_strip_all_tags($alt)));
+
+        if (!$id) {
+            return new WP_Error('boko_bad_request', 'id is required.', array('status' => 400));
+        }
+        if ($alt === '') {
+            return new WP_Error('boko_bad_request', "Alt text can't be empty.", array('status' => 400));
+        }
+        if (mb_strlen($alt) > 125) {
+            return new WP_Error('boko_bad_request', 'Alt text must be 125 characters or fewer.', array('status' => 400));
+        }
+        $post = get_post($id);
+        if (!$post || $post->post_type !== 'attachment') {
+            return new WP_Error('boko_not_found', 'That image was not found in the media library.', array('status' => 404));
+        }
+        if (strpos((string) $post->post_mime_type, 'image/') !== 0) {
+            return new WP_Error('boko_bad_request', 'That attachment is not an image.', array('status' => 400));
+        }
+
+        update_post_meta($id, '_wp_attachment_image_alt', sanitize_text_field($alt));
+        return array('ok' => true, 'id' => $id, 'alt' => $alt);
+    }
+
+    /**
+     * Where this image sits among its parent's images: 0 for the featured
+     * image, 1..n for WooCommerce gallery images. Drives the "alternate view"
+     * wording in generated alt text.
+     */
+    private static function attachment_index($att_id, $parent_id) {
+        if (!$parent_id) { return 0; }
+        if (intval(get_post_thumbnail_id($parent_id)) === intval($att_id)) { return 0; }
+        $gallery = get_post_meta($parent_id, '_product_image_gallery', true);
+        if ($gallery) {
+            $ids = array_map('intval', array_filter(explode(',', (string) $gallery)));
+            $pos = array_search(intval($att_id), $ids, true);
+            if ($pos !== false) { return $pos + 1; }
+        }
+        return 0;
     }
 
     /* ---------------- Collectors ---------------- */
