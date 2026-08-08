@@ -147,3 +147,21 @@ textarea.desc{min-height:70px}
 .license-form input{padding:9px 12px;border:1px solid var(--line);border-radius:10px;font-size:13px;font-family:var(--font);min-width:250px;background:var(--white);color:var(--ink)}
 .license-form input:focus{outline:none;border-color:var(--lime)}
 .license-err{margin-top:10px;font-size:12.5px;font-weight:600;color:var(--lime)}
+
+/* Alt tags tab: image cards */
+.imgcard{display:flex;gap:14px;background:var(--white);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
+.imgcard.saved{border-color:var(--lime);box-shadow:0 0 0 1px var(--lime) inset}
+.imgcard.locked{opacity:.9;border-style:dashed;background:var(--lilac)}
+.imgcard.locked .card-title{color:var(--muted)}
+.imgthumb{width:104px;height:104px;flex:0 0 auto;object-fit:cover;border-radius:10px;border:1px solid var(--line);background:var(--lilac);display:block}
+.imgbody{flex:1;min-width:0}
+.imgbody .card-title{word-break:break-word}
+.imgbody .field{margin-top:10px}
+.imgbody .audit{margin-top:8px}
+.imgbody textarea.title{min-height:52px}
+.scanmore{text-align:center;margin:18px 0 4px}
+.scanmore-note{font-size:11.5px;color:var(--muted);margin-top:8px}
+@media (max-width:560px){
+  .imgcard{flex-direction:column}
+  .imgthumb{width:100%;height:170px}
+}

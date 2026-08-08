@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState, useCallback, useDeferredValue } from "react";
 
+import AltTagsPanel from "./AltTagsPanel";
+
 const TITLE_MIN = 50, TITLE_MAX = 60, DESC_MIN = 150, DESC_MAX = 160;
 const PAGE_SIZE = 10;
 
@@ -11,6 +13,7 @@ const ALL_TABS = [
   { key: "postCategories", label: "Post categories", woo: false },
   { key: "products", label: "Products", woo: true },
   { key: "productCategories", label: "Product categories", woo: true },
+  { key: "alt", label: "Alt tags", woo: false, standalone: true },
 ];
 
 function Logo() {
@@ -68,7 +71,9 @@ function matchesQuery(item, q) {
 export default function Page() {
   const [data, setData] = useState({ pages: [], posts: [], postCategories: [], products: [], productCategories: [] });
   const [site, setSite] = useState({ name: "", seo: "none", woocommerce: false });
-  const [tabs, setTabs] = useState([]);
+  // Seeded with the always-available tabs so the tab bar (and the Alt tags tab,
+  // which doesn't depend on /api/items) still renders if the meta load fails.
+  const [tabs, setTabs] = useState(() => ALL_TABS.filter((t) => !t.woo));
   const [activeTab, setActiveTab] = useState("pages");
   const [connected, setConnected] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -291,6 +296,7 @@ export default function Page() {
   }, [items]);
 
   const activeLabel = (tabs.find((t) => t.key === activeTab) || { label: "items" }).label.toLowerCase();
+  const isAltTab = activeTab === "alt";
 
   // ---- Connect screen ----
   if (connected === false) {
@@ -342,139 +348,152 @@ export default function Page() {
           <div className="tabs">
             {tabs.map((t) => (
               <button key={t.key} className={"tab" + (t.key === activeTab ? " active" : "")} onClick={() => { setActiveTab(t.key); setPage(1); }}>
-                {t.label} <span className="count">{(data[t.key] || []).length}</span>
+                {t.label}
+                {!t.standalone && <span className="count">{(data[t.key] || []).length}</span>}
               </button>
             ))}
           </div>
 
-          {gate && gate.member && (
-            <div className="member-banner">✓ Membership active — all {gate.total} items are unlocked.</div>
+          {isAltTab && (
+            <AltTagsPanel
+              platform="wordpress"
+              upgradeUrl={gate ? gate.upgradeUrl : "https://www.boko.com.au/upgrade"}
+              onToast={showToast}
+            />
           )}
 
-          {gate && gate.locked && (
-            <div className="upgrade-banner">
-              <div className="upgrade-copy">
-                <b>You&apos;re on the free plan.</b> The first {gate.freeLimit} items are free to optimise.{" "}
-                {gate.lockedCount} more {gate.lockedCount === 1 ? "item is" : "items are"} locked across your site.
-              </div>
-              <div className="upgrade-actions">
-                <a className="btn primary sm" href={gate.upgradeUrl} target="_blank" rel="noopener noreferrer">Upgrade with Boko ▸</a>
-                <div className="license-form">
-                  <input
-                    type="text"
-                    value={licenseKey}
-                    placeholder="Already purchased? Paste licence key"
-                    aria-label="Licence key"
-                    onChange={(e) => setLicenseKey(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") activateLicense(); }}
-                  />
-                  <button className="btn dark sm" onClick={activateLicense}>Unlock</button>
+          {!isAltTab && (
+            <>
+            {gate && gate.member && (
+              <div className="member-banner">✓ Membership active — all {gate.total} items are unlocked.</div>
+            )}
+
+            {gate && gate.locked && (
+              <div className="upgrade-banner">
+                <div className="upgrade-copy">
+                  <b>You&apos;re on the free plan.</b> The first {gate.freeLimit} items are free to optimise.{" "}
+                  {gate.lockedCount} more {gate.lockedCount === 1 ? "item is" : "items are"} locked across your site.
                 </div>
-              </div>
-              {licenseErr && <div className="license-err">⚠ {licenseErr}</div>}
-            </div>
-          )}
-
-          {!loading && !loadError && allItems.length > 0 && (
-            <div className="searchbar">
-              <div className="search-input">
-                <span className="ico">⌕</span>
-                <input
-                  type="search"
-                  value={query}
-                  placeholder={`Search ${activeLabel} by title or URL…`}
-                  aria-label={`Search ${activeLabel} by title or URL`}
-                  onChange={(e) => setQuery(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Escape") setQuery(""); }}
-                />
-                {query && (
-                  <button className="clear" onClick={() => setQuery("")} aria-label="Clear search">×</button>
-                )}
-              </div>
-              {query && (
-                <span className="search-count">
-                  <b>{items.length}</b> of {allItems.length} match
-                </span>
-              )}
-            </div>
-          )}
-
-          {!loading && !loadError && items.length > 0 && (
-            <div className="toolbar">
-              <button className="btn primary" onClick={fixIssues} disabled={busyAll || !counts.issues}>
-                ⚡ Fix issues{counts.issues ? ` (${counts.issues})` : ""}
-              </button>
-              <button className="btn" onClick={generateAll} disabled={busyAll || !counts.pending}>
-                Generate all{counts.pending ? ` (${counts.pending})` : ""}
-              </button>
-              <div className="spacer" />
-              <button className="btn dark" onClick={importAll} disabled={busyAll || !counts.ready}>
-                Import all ready{counts.ready ? ` (${counts.ready})` : ""} ▸
-              </button>
-            </div>
-          )}
-
-          {!loading && !loadError && items.length > 0 && (
-            <div className={"summary " + (counts.withIssues ? "issues" : "clean")}>
-              {counts.withIssues ? "⚠ " : "✓ "}
-              <span>
-                {counts.withIssues ? (
-                  <><b>{counts.withIssues}</b> of {items.length} {activeLabel} have SEO meta issues to fix.</>
-                ) : (
-                  <>All {items.length} {activeLabel} have healthy meta titles &amp; descriptions.</>
-                )}
-              </span>
-            </div>
-          )}
-
-          {loading && (
-            <div className="loading">
-              <div>Loading your site content</div>
-              <div style={{ marginTop: 10 }}><span className="dot" /><span className="dot" /><span className="dot" /></div>
-            </div>
-          )}
-
-          {loadError && (
-            <div className="empty">
-              Couldn&apos;t load site content.<br />
-              <small>{loadError}</small>
-              <div style={{ marginTop: 14 }}><button className="btn" onClick={load}>Retry</button></div>
-            </div>
-          )}
-
-          {!loading && !loadError && items.length === 0 && (
-            <div className="empty">
-              {query ? (
-                <>
-                  No {activeLabel} match &ldquo;{query}&rdquo;.
-                  <div style={{ marginTop: 14 }}>
-                    <button className="btn ghost sm" onClick={() => setQuery("")}>Clear search</button>
+                <div className="upgrade-actions">
+                  <a className="btn primary sm" href={gate.upgradeUrl} target="_blank" rel="noopener noreferrer">Upgrade with Boko ▸</a>
+                  <div className="license-form">
+                    <input
+                      type="text"
+                      value={licenseKey}
+                      placeholder="Already purchased? Paste licence key"
+                      aria-label="Licence key"
+                      onChange={(e) => setLicenseKey(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") activateLicense(); }}
+                    />
+                    <button className="btn dark sm" onClick={activateLicense}>Unlock</button>
                   </div>
-                </>
-              ) : (
-                <>No {activeLabel} found on this site.</>
-              )}
-            </div>
-          )}
+                </div>
+                {licenseErr && <div className="license-err">⚠ {licenseErr}</div>}
+              </div>
+            )}
 
-          {!loading && !loadError &&
-            pageItems.map((item) => (
-              <ItemCard
-                key={item.id}
-                item={item}
-                upgradeUrl={gate ? gate.upgradeUrl : "https://www.boko.com.au/upgrade"}
-                onGenerate={() => generate(item)}
-                onImport={() => importItem(item)}
-                onEdit={(field, value) => patchItem(item.type, item.id, { [field]: value })}
-              />
-            ))}
+            {!loading && !loadError && allItems.length > 0 && (
+              <div className="searchbar">
+                <div className="search-input">
+                  <span className="ico">⌕</span>
+                  <input
+                    type="search"
+                    value={query}
+                    placeholder={`Search ${activeLabel} by title or URL…`}
+                    aria-label={`Search ${activeLabel} by title or URL`}
+                    onChange={(e) => setQuery(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Escape") setQuery(""); }}
+                  />
+                  {query && (
+                    <button className="clear" onClick={() => setQuery("")} aria-label="Clear search">×</button>
+                  )}
+                </div>
+                {query && (
+                  <span className="search-count">
+                    <b>{items.length}</b> of {allItems.length} match
+                  </span>
+                )}
+              </div>
+            )}
 
-          {!loading && !loadError && totalPages > 1 && (
-            <div className="pager">
-              <button className="btn ghost sm" disabled={safePage <= 1} onClick={() => setPage(safePage - 1)}>‹ Prev</button>
-              <span className="pginfo">Page {safePage} of {totalPages} · {items.length} total</span>
-              <button className="btn ghost sm" disabled={safePage >= totalPages} onClick={() => setPage(safePage + 1)}>Next ›</button>
-            </div>
+            {!loading && !loadError && items.length > 0 && (
+              <div className="toolbar">
+                <button className="btn primary" onClick={fixIssues} disabled={busyAll || !counts.issues}>
+                  ⚡ Fix issues{counts.issues ? ` (${counts.issues})` : ""}
+                </button>
+                <button className="btn" onClick={generateAll} disabled={busyAll || !counts.pending}>
+                  Generate all{counts.pending ? ` (${counts.pending})` : ""}
+                </button>
+                <div className="spacer" />
+                <button className="btn dark" onClick={importAll} disabled={busyAll || !counts.ready}>
+                  Import all ready{counts.ready ? ` (${counts.ready})` : ""} ▸
+                </button>
+              </div>
+            )}
+
+            {!loading && !loadError && items.length > 0 && (
+              <div className={"summary " + (counts.withIssues ? "issues" : "clean")}>
+                {counts.withIssues ? "⚠ " : "✓ "}
+                <span>
+                  {counts.withIssues ? (
+                    <><b>{counts.withIssues}</b> of {items.length} {activeLabel} have SEO meta issues to fix.</>
+                  ) : (
+                    <>All {items.length} {activeLabel} have healthy meta titles &amp; descriptions.</>
+                  )}
+                </span>
+              </div>
+            )}
+
+            {loading && (
+              <div className="loading">
+                <div>Loading your site content</div>
+                <div style={{ marginTop: 10 }}><span className="dot" /><span className="dot" /><span className="dot" /></div>
+              </div>
+            )}
+
+            {loadError && (
+              <div className="empty">
+                Couldn&apos;t load site content.<br />
+                <small>{loadError}</small>
+                <div style={{ marginTop: 14 }}><button className="btn" onClick={load}>Retry</button></div>
+              </div>
+            )}
+
+            {!loading && !loadError && items.length === 0 && (
+              <div className="empty">
+                {query ? (
+                  <>
+                    No {activeLabel} match &ldquo;{query}&rdquo;.
+                    <div style={{ marginTop: 14 }}>
+                      <button className="btn ghost sm" onClick={() => setQuery("")}>Clear search</button>
+                    </div>
+                  </>
+                ) : (
+                  <>No {activeLabel} found on this site.</>
+                )}
+              </div>
+            )}
+
+            {!loading && !loadError &&
+              pageItems.map((item) => (
+                <ItemCard
+                  key={item.id}
+                  item={item}
+                  upgradeUrl={gate ? gate.upgradeUrl : "https://www.boko.com.au/upgrade"}
+                  onGenerate={() => generate(item)}
+                  onImport={() => importItem(item)}
+                  onEdit={(field, value) => patchItem(item.type, item.id, { [field]: value })}
+                />
+              ))}
+
+            {!loading && !loadError && totalPages > 1 && (
+              <div className="pager">
+                <button className="btn ghost sm" disabled={safePage <= 1} onClick={() => setPage(safePage - 1)}>‹ Prev</button>
+                <span className="pginfo">Page {safePage} of {totalPages} · {items.length} total</span>
+                <button className="btn ghost sm" disabled={safePage >= totalPages} onClick={() => setPage(safePage + 1)}>Next ›</button>
+              </div>
+            )}
+            </>
           )}
 
           <div className="foot">Boko Digital · Strategize. Execute. Deliver. — meta written clear, concise, active voice.</div>
