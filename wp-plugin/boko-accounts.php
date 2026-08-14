@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Boko Accounts
  * Description: Turns this WordPress site into the identity and entitlement provider for the Boko SEO Studio apps. Signs members in with their existing ProfilePress membership and tells each app which plan they are on and what limits apply. Install on boko.com.au only — this is NOT the client-site bridge plugin.
- * Version: 1.0.0
+ * Version: 1.1.0
  * Author: Boko Digital
  */
 
@@ -10,7 +10,7 @@ if (!defined('ABSPATH')) { exit; }
 
 class Boko_Accounts {
 
-    const VERSION      = '1.0.0';
+    const VERSION      = '1.1.0';
     const OPT          = 'boko_accounts_settings';
     const TOKEN_TTL    = 900;   // signed login token: 15 minutes
     const SESSION_TTL  = 86400; // app session token: 24h, then the app re-checks /me
@@ -39,6 +39,7 @@ class Boko_Accounts {
             'secret'       => '',
             'plan_map'     => array(), // profilepress plan id => tier key
             'allowed_apps' => "https://boko-seo-app.vercel.app\nhttps://boko-seo-wordpress.vercel.app",
+            'extra_plan_ids' => '',
         ));
     }
 
@@ -54,6 +55,7 @@ class Boko_Accounts {
         $out = array();
         $out['secret'] = isset($in['secret']) ? trim(sanitize_text_field($in['secret'])) : '';
         $out['allowed_apps'] = isset($in['allowed_apps']) ? trim($in['allowed_apps']) : '';
+        $out['extra_plan_ids'] = isset($in['extra_plan_ids']) ? trim(sanitize_text_field($in['extra_plan_ids'])) : '';
         $out['plan_map'] = array();
         if (isset($in['plan_map']) && is_array($in['plan_map'])) {
             $tiers = array_keys(self::tiers());
@@ -68,28 +70,93 @@ class Boko_Accounts {
         return $out;
     }
 
-    /** Every ProfilePress membership plan on this site, as id => name. */
-    public static function profilepress_plans() {
+    /**
+     * Every ProfilePress membership plan on this site, as id => name.
+     *
+     * ProfilePress keeps plans in its own database table (not a post type) and the
+     * helper functions differ between versions, so try each source in turn and fall
+     * back to a self-discovering table scan. Whatever the version, we find them.
+     */
+    public static function profilepress_plans(&$via = null) {
+        global $wpdb;
         $plans = array();
+
+        // 1. Public helper, when the installed version has one.
         if (function_exists('ppress_get_all_plans')) {
             foreach ((array) ppress_get_all_plans() as $p) {
                 if (is_object($p) && isset($p->id)) {
                     $plans[intval($p->id)] = isset($p->name) ? $p->name : ('Plan ' . $p->id);
                 }
             }
+            if ($plans) { $via = 'ppress_get_all_plans()'; return $plans; }
         }
-        if (empty($plans)) {
-            // Fallback: ProfilePress stores plans as a custom post type in some versions.
-            $posts = get_posts(array('post_type' => 'ppress_plan', 'numberposts' => 100, 'post_status' => 'any'));
-            foreach ($posts as $p) { $plans[$p->ID] = $p->post_title; }
+
+        // 2. The repository class used by recent versions.
+        $repo = '\\ProfilePress\\Core\\Membership\\Repositories\\PlanRepository';
+        if (class_exists($repo) && method_exists($repo, 'init')) {
+            try {
+                $all = call_user_func(array($repo, 'init'))->retrieveAll();
+                foreach ((array) $all as $p) {
+                    if (is_object($p) && isset($p->id)) {
+                        $plans[intval($p->id)] = isset($p->name) ? $p->name : ('Plan ' . $p->id);
+                    }
+                }
+            } catch (\Exception $e) { /* fall through */ }
+            if ($plans) { $via = 'PlanRepository'; return $plans; }
         }
+
+        // 3. Find the plans table ourselves. Table names come from SHOW TABLES, so
+        //    they're real identifiers rather than anything user-supplied.
+        $tables = $wpdb->get_col("SHOW TABLES LIKE '%ppress%'");
+        if (is_array($tables)) {
+            // Prefer a table whose name mentions plans.
+            usort($tables, function ($a, $b) {
+                return (strpos($b, 'plan') !== false) - (strpos($a, 'plan') !== false);
+            });
+            foreach ($tables as $table) {
+                $cols = $wpdb->get_col("SHOW COLUMNS FROM `" . esc_sql($table) . "`");
+                if (!is_array($cols) || !in_array('id', $cols, true) || !in_array('name', $cols, true)) { continue; }
+                $rows = $wpdb->get_results("SELECT `id`, `name` FROM `" . esc_sql($table) . "` ORDER BY `id` ASC LIMIT 200");
+                if (!$rows) { continue; }
+                foreach ($rows as $r) {
+                    $plans[intval($r->id)] = $r->name !== '' ? $r->name : ('Plan ' . $r->id);
+                }
+                if ($plans) { $via = 'table ' . $table; return $plans; }
+            }
+        }
+
+        // 4. Custom post type, for much older builds.
+        $posts = get_posts(array('post_type' => 'ppress_plan', 'numberposts' => 100, 'post_status' => 'any'));
+        foreach ($posts as $p) { $plans[$p->ID] = $p->post_title; }
+        if ($plans) { $via = 'post type'; }
         return $plans;
+    }
+
+    /** Discovered plans plus any IDs the admin added by hand. */
+    public static function all_plans(&$via = null) {
+        $plans = self::profilepress_plans($via);
+        $s = self::settings();
+        foreach (self::parse_ids($s['extra_plan_ids']) as $id) {
+            if (!isset($plans[$id])) { $plans[$id] = 'Plan #' . $id . ' (added manually)'; }
+        }
+        ksort($plans);
+        return $plans;
+    }
+
+    public static function parse_ids($str) {
+        $out = array();
+        foreach (preg_split('/[^0-9]+/', (string) $str) as $bit) {
+            $n = intval($bit);
+            if ($n > 0) { $out[] = $n; }
+        }
+        return array_values(array_unique($out));
     }
 
     public static function settings_page() {
         if (!current_user_can('manage_options')) { return; }
         $s = self::settings();
-        $plans = self::profilepress_plans();
+        $via = null;
+        $plans = self::all_plans($via);
         $tiers = self::tiers();
         ?>
         <div class="wrap">
@@ -112,8 +179,14 @@ class Boko_Accounts {
 
                 <h2>Plan mapping</h2>
                 <p>Tell the apps what each of your ProfilePress plans is worth.</p>
+                <p><label>Extra plan IDs (comma separated) —
+                    <input type="text" class="regular-text code" style="width:220px"
+                           name="<?php echo esc_attr(self::OPT); ?>[extra_plan_ids]"
+                           value="<?php echo esc_attr($s['extra_plan_ids']); ?>" placeholder="e.g. 9, 10" />
+                </label><br /><span class="description">Only needed if a plan is missing from the list below.
+                Find IDs under <strong>ProfilePress → Membership Plans</strong>. Save to add them as rows.</span></p>
                 <?php if (empty($plans)) : ?>
-                    <p><em>No ProfilePress plans found yet. Create your plans first, then come back.</em></p>
+                    <p><em>No ProfilePress plans detected automatically. Add their IDs in the box above and save.</em></p>
                 <?php else : ?>
                 <table class="widefat striped" style="max-width:820px">
                     <thead><tr><th>ProfilePress plan</th><th>ID</th><th>Maps to</th><th>Limits applied</th></tr></thead>
@@ -168,7 +241,8 @@ class Boko_Accounts {
                     ? '<span style="color:#080">detected</span>' : '<span style="color:#c00">NOT detected</span>'; ?></td></tr>
                 <tr><td>Shared secret</td><td><?php echo $s['secret']
                     ? '<span style="color:#080">set</span>' : '<span style="color:#c00">missing — logins will fail</span>'; ?></td></tr>
-                <tr><td>Plans mapped</td><td><?php echo count($s['plan_map']); ?></td></tr>
+                <tr><td>Plans detected</td><td><?php echo count($plans); ?><?php echo $via ? ' <span class="description">(via ' . esc_html($via) . ')</span>' : ''; ?></td></tr>
+                <tr><td>Plans mapped</td><td><?php echo count($s['plan_map']) ?: '<span style="color:#c00">0 — paid members will look Free</span>'; ?></td></tr>
                 <tr><td>Entitlement endpoint</td><td><code><?php echo esc_url(rest_url('boko-account/v1/me')); ?></code></td></tr>
                 <tr><td>Login URL</td><td><code><?php echo esc_url(home_url('/?boko_auth=1')); ?></code></td></tr>
             </tbody></table>
