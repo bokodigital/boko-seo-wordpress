@@ -7,7 +7,7 @@
 // only difference (how a page of images is requested, and what a save posts).
 
 import { useCallback, useEffect, useMemo, useRef, useState, useDeferredValue } from "react";
-import { ALT_MAX, auditAlt } from "@/lib/alt-text";
+import { ALT_MAX, auditAlt, altCounterClass } from "@/lib/seo-audit";
 
 const PAGE_SIZE = 12;
 
@@ -442,7 +442,7 @@ function ImageCard({ img, target, upgradeUrl, onEdit, onReset, onSave }) {
         <div className="field">
           <label>
             Alt text
-            <span className={"counter " + (alt.length && !over ? "ok" : "warn")}>
+            <span className={"counter " + altCounterClass(alt)}>
               {alt.length} / {ALT_MAX}
             </span>
           </label>
@@ -456,8 +456,8 @@ function ImageCard({ img, target, upgradeUrl, onEdit, onReset, onSave }) {
         </div>
 
         <div className="audit">
-          <span className={"audit-chip " + (a.state === "ok" ? "good" : "bad")}>
-            {a.state === "ok" ? "✓" : "⚠"} {a.msg}
+          <span className={"audit-chip " + (a.ok ? "good" : "bad")}>
+            {a.ok ? "✓" : "⚠"} {a.msg}
           </span>
         </div>
 

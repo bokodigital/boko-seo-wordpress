@@ -4,8 +4,8 @@ import { useEffect, useMemo, useState, useCallback, useDeferredValue } from "rea
 
 import AltTagsPanel from "./AltTagsPanel";
 import AccountBar from "./AccountBar";
+import { auditItem, counterClass, LIMITS } from "@/lib/seo-audit";
 
-const TITLE_MIN = 50, TITLE_MAX = 60, DESC_MIN = 150, DESC_MAX = 160;
 const PAGE_SIZE = 10;
 
 const ALL_TABS = [
@@ -40,21 +40,6 @@ function Topbar() {
   );
 }
 
-function auditField(val, min, max, name) {
-  const v = (val || "").trim(), n = v.length;
-  if (!n) return { state: "missing", msg: `${name} missing` };
-  if (n > max) return { state: "long", msg: `${name} too long (${n}/${max})` };
-  if (n < min) return { state: "short", msg: `${name} too short (${n}/${min}+)` };
-  return { state: "ok", msg: `${name} OK (${n})` };
-}
-function auditItem(item) {
-  const title = auditField(item.curTitle, TITLE_MIN, TITLE_MAX, "Meta title");
-  const desc = auditField(item.curDesc, DESC_MIN, DESC_MAX, "Meta description");
-  return { title, desc, hasIssue: title.state !== "ok" || desc.state !== "ok" };
-}
-function counterClass(len, min, max) {
-  return len >= min && len <= max ? "ok" : "warn";
-}
 
 // --- Search ---------------------------------------------------------------
 // Matches on title, slug/handle and full URL. Multiple words = AND (all must
@@ -528,8 +513,8 @@ function ItemCard({ item, onGenerate, onImport, onEdit, upgradeUrl }) {
   if (item.curTitle || item.curDesc) idleLabel = a.hasIssue ? "⚡ Fix meta" : "⚡ Suggest improvement";
 
   const chip = (o) => (
-    <span className={"audit-chip " + (o.state === "ok" ? "good" : "bad")}>
-      {o.state === "ok" ? "✓" : "⚠"} {o.msg}
+    <span className={"audit-chip " + (o.ok ? "good" : "bad")}>
+      {o.ok ? "✓" : "⚠"} {o.msg}
     </span>
   );
 
@@ -576,11 +561,11 @@ function ItemCard({ item, onGenerate, onImport, onEdit, upgradeUrl }) {
       {showFields && (
         <>
           <div className="field">
-            <label>Meta title <span className={"counter " + counterClass(tLen, TITLE_MIN, TITLE_MAX)}>{tLen} / {TITLE_MAX}</span></label>
+            <label>Meta title <span className={"counter " + counterClass(item.genTitle, "title")}>{tLen} / {LIMITS.title.max}</span></label>
             <textarea className="title" value={item.genTitle} onChange={(e) => onEdit("genTitle", e.target.value)} />
           </div>
           <div className="field">
-            <label>Meta description <span className={"counter " + counterClass(dLen, DESC_MIN, DESC_MAX)}>{dLen} / {DESC_MAX}</span></label>
+            <label>Meta description <span className={"counter " + counterClass(item.genDesc, "description")}>{dLen} / {LIMITS.description.max}</span></label>
             <textarea className="desc" value={item.genDesc} onChange={(e) => onEdit("genDesc", e.target.value)} />
           </div>
         </>
