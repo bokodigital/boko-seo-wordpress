@@ -3,6 +3,8 @@ import { getSession } from "@/lib/session";
 import { wpGet } from "@/lib/wp";
 import { applyGate } from "@/lib/gate";
 import { verifyLicense } from "@/lib/license";
+import { entitlementFromToken } from "@/lib/entitlement";
+import { getAccountSession } from "@/lib/account-session";
 import { suggestAlt } from "@/lib/alt-text";
 
 export const dynamic = "force-dynamic";
@@ -81,8 +83,10 @@ export async function GET(request) {
     const d = await wpGet(session, `/images?offset=${offset}&limit=${limit}`);
     const images = (d.images || []).map(decorate);
 
+    const account = getAccountSession(request);
+    const entitlement = entitlementFromToken(account && account.bokoToken);
     const member = verifyLicense(session.license, session.site);
-    const gate = applyGate([images], { member, startAt: alreadyLoaded });
+    const gate = applyGate([images], { member, entitlement, startAt: alreadyLoaded });
 
     return NextResponse.json({
       connected: true,
