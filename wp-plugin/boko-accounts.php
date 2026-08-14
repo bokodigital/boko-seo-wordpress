@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Boko Accounts
  * Description: Turns this WordPress site into the identity and entitlement provider for the Boko SEO Studio apps. Signs members in with their existing ProfilePress membership and tells each app which plan they are on and what limits apply. Install on boko.com.au only — this is NOT the client-site bridge plugin.
- * Version: 1.2.0
+ * Version: 1.3.0
  * Author: Boko Digital
  */
 
@@ -10,7 +10,7 @@ if (!defined('ABSPATH')) { exit; }
 
 class Boko_Accounts {
 
-    const VERSION      = '1.2.0';
+    const VERSION      = '1.3.0';
     const OPT          = 'boko_accounts_settings';
     const TOKEN_TTL    = 900;   // signed login token: 15 minutes
     const SESSION_TTL  = 86400; // app session token: 24h, then the app re-checks /me
@@ -268,6 +268,73 @@ class Boko_Accounts {
 
                 <?php submit_button(); ?>
             </form>
+
+            <hr />
+            <h2>Check a member</h2>
+            <p>Shows exactly what plan the apps would give someone, and why — without needing
+            their password. Use it to verify a test account, or when a customer says
+            &ldquo;I paid but it still says Free&rdquo;. Read-only; nothing is changed.</p>
+            <form method="get" action="">
+                <input type="hidden" name="page" value="boko-accounts" />
+                <input type="text" name="boko_check" class="regular-text"
+                       value="<?php echo esc_attr(isset($_GET['boko_check']) ? wp_unslash($_GET['boko_check']) : ''); ?>"
+                       placeholder="email, username or user ID" style="width:320px" />
+                <button type="submit" class="button">Check</button>
+            </form>
+            <?php
+            $q = isset($_GET['boko_check']) ? trim(sanitize_text_field(wp_unslash($_GET['boko_check']))) : '';
+            if ($q !== '') {
+                $u = is_numeric($q) ? get_user_by('id', intval($q)) : (get_user_by('email', $q) ?: get_user_by('login', $q));
+                if (!$u) {
+                    echo '<div class="notice notice-error inline"><p>No user found for <code>' . esc_html($q) . '</code>.</p></div>';
+                } else {
+                    $ent = self::entitlement_for($u->ID);
+                    $why = array(
+                        'subscription' => 'an active ProfilePress subscription (or its plan capability)',
+                        'role'         => 'a mapped WordPress role',
+                        'none'         => 'nothing — no mapped subscription or role',
+                    );
+                    $paid = $ent['plan'] !== 'free';
+                    echo '<div class="notice ' . ($paid ? 'notice-success' : 'notice-warning') . ' inline"><p><strong>'
+                        . esc_html($u->user_email) . '</strong> resolves to <strong>' . esc_html($ent['planLabel'])
+                        . '</strong>, granted by ' . esc_html(isset($why[$ent['grantedBy']]) ? $why[$ent['grantedBy']] : $ent['grantedBy']) . '.</p></div>';
+
+                    echo '<table class="widefat striped" style="max-width:820px"><tbody>';
+                    echo '<tr><td style="width:230px">Roles held</td><td>';
+                    foreach ((array) $u->roles as $r) { echo '<code>' . esc_html($r) . '</code> '; }
+                    echo '</td></tr>';
+                    echo '<tr><td>Plan</td><td><strong>' . esc_html($ent['planLabel']) . '</strong> (<code>' . esc_html($ent['plan']) . '</code>)</td></tr>';
+                    echo '<tr><td>Stores allowed</td><td>' . intval($ent['limits']['stores']) . '</td></tr>';
+                    echo '<tr><td>Items per month</td><td>' . ($ent['limits']['itemsPerMonth'] ? number_format($ent['limits']['itemsPerMonth']) : 'unlimited') . '</td></tr>';
+                    echo '<tr><td>Auto-optimise</td><td>' . ($ent['limits']['autoOptimise'] ? 'yes' : 'no') . '</td></tr>';
+                    echo '</tbody></table>';
+
+                    echo '<h4>How each mapped plan evaluated</h4><table class="widefat striped" style="max-width:820px">'
+                        . '<thead><tr><th>Plan</th><th>Tier</th><th>Active subscription</th><th>Has plan capability</th></tr></thead><tbody>';
+                    $all = self::all_plans();
+                    foreach ((array) $s['plan_map'] as $pid => $tier) {
+                        $sub = function_exists('ppress_has_active_subscription') ? ppress_has_active_subscription($u->ID, intval($pid)) : null;
+                        $cap = user_can($u->ID, 'ppress_plan_' . intval($pid));
+                        echo '<tr><td>' . esc_html(isset($all[$pid]) ? $all[$pid] : ('Plan ' . $pid)) . ' <code>' . intval($pid) . '</code></td>'
+                            . '<td>' . esc_html($tier) . '</td>'
+                            . '<td>' . ($sub === null ? 'n/a' : ($sub ? '<strong style="color:#080">yes</strong>' : 'no')) . '</td>'
+                            . '<td>' . ($cap ? '<strong style="color:#080">yes</strong>' : 'no') . '</td></tr>';
+                    }
+                    echo '</tbody></table>';
+
+                    if (!empty($s['role_map'])) {
+                        echo '<h4>How each mapped role evaluated</h4><table class="widefat striped" style="max-width:820px">'
+                            . '<thead><tr><th>Role</th><th>Tier</th><th>User has it</th></tr></thead><tbody>';
+                        foreach ((array) $s['role_map'] as $role => $tier) {
+                            $has = in_array($role, (array) $u->roles, true);
+                            echo '<tr><td><code>' . esc_html($role) . '</code></td><td>' . esc_html($tier) . '</td>'
+                                . '<td>' . ($has ? '<strong style="color:#080">yes</strong>' : 'no') . '</td></tr>';
+                        }
+                        echo '</tbody></table>';
+                    }
+                }
+            }
+            ?>
 
             <hr />
             <h2>Health check</h2>
