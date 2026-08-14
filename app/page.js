@@ -32,7 +32,10 @@ function Topbar() {
   return (
     <div className="topbar">
       <div className="brand"><div className="logo"><Logo /></div></div>
-      <span className="navlabel">WordPress SEO Studio</span>
+      <div className="topbar-right">
+        <AccountBar />
+        <span className="navlabel">WordPress SEO Studio</span>
+      </div>
     </div>
   );
 }
@@ -337,7 +340,6 @@ export default function Page() {
                 </p>
               </div>
               <div className="store-box">
-                <AccountBar />
                 <div className="store-chip">
                   <span className="dotg" style={{ background: site.name ? "#BFFC00" : "#9aa1ad" }} />
                   {site.name ? <b>{site.name}</b> : "Connected"}

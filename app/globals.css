@@ -166,12 +166,18 @@ textarea.desc{min-height:70px}
   .imgthumb{width:100%;height:170px}
 }
 
-/* Membership status (Boko Accounts SSO) */
-.acct{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+/* Membership status (Boko Accounts SSO) — lives in the top bar */
+.topbar-right{display:flex;align-items:center;gap:18px;flex-wrap:wrap;justify-content:flex-end;min-width:0}
+.acct{display:flex;align-items:center;gap:8px;min-width:0}
 .plan-chip{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1px;padding:5px 11px;border-radius:999px;background:var(--lilac);color:var(--muted);border:1px solid var(--line);white-space:nowrap}
 .plan-chip.plan-store-fix{background:var(--lime);color:var(--ink);border-color:var(--lime)}
 .plan-chip.plan-agency{background:var(--ink);color:var(--lime);border-color:var(--ink)}
-.acct-email{font-size:12px;color:var(--muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.acct-email{font-size:12px;color:var(--muted);max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .acct-link{appearance:none;border:0;background:none;padding:0;font-family:var(--font);font-size:12px;font-weight:700;color:var(--muted);cursor:pointer;text-decoration:underline}
 .acct-link:hover{color:var(--ink)}
-.acct-notice{font-size:12px;font-weight:600;color:var(--ink);background:var(--lime);border-radius:8px;padding:6px 10px;margin-top:6px}
+.acct-notice{font-size:12px;font-weight:600;color:var(--ink);background:var(--lime);border-radius:8px;padding:6px 10px}
+@media (max-width:640px){
+  .topbar-right{gap:10px}
+  .acct-email{max-width:130px}
+  .navlabel{display:none}
+}
