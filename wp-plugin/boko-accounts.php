@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Boko Accounts
  * Description: Turns this WordPress site into the identity and entitlement provider for the Boko SEO Studio apps. Signs members in with their existing ProfilePress membership and tells each app which plan they are on and what limits apply. Install on boko.com.au only — this is NOT the client-site bridge plugin.
- * Version: 1.1.0
+ * Version: 1.2.0
  * Author: Boko Digital
  */
 
@@ -10,7 +10,7 @@ if (!defined('ABSPATH')) { exit; }
 
 class Boko_Accounts {
 
-    const VERSION      = '1.1.0';
+    const VERSION      = '1.2.0';
     const OPT          = 'boko_accounts_settings';
     const TOKEN_TTL    = 900;   // signed login token: 15 minutes
     const SESSION_TTL  = 86400; // app session token: 24h, then the app re-checks /me
@@ -40,6 +40,7 @@ class Boko_Accounts {
             'plan_map'     => array(), // profilepress plan id => tier key
             'allowed_apps' => "https://boko-seo-app.vercel.app\nhttps://boko-seo-wordpress.vercel.app",
             'extra_plan_ids' => '',
+            'role_map'     => array(), // wp role slug => tier key
         ));
     }
 
@@ -56,6 +57,15 @@ class Boko_Accounts {
         $out['secret'] = isset($in['secret']) ? trim(sanitize_text_field($in['secret'])) : '';
         $out['allowed_apps'] = isset($in['allowed_apps']) ? trim($in['allowed_apps']) : '';
         $out['extra_plan_ids'] = isset($in['extra_plan_ids']) ? trim(sanitize_text_field($in['extra_plan_ids'])) : '';
+        $out['role_map'] = array();
+        if (isset($in['role_map']) && is_array($in['role_map'])) {
+            $tiers = array_keys(self::tiers());
+            foreach ($in['role_map'] as $role => $tier) {
+                $role = sanitize_key($role);
+                $tier = sanitize_text_field($tier);
+                if ($role && in_array($tier, $tiers, true)) { $out['role_map'][$role] = $tier; }
+            }
+        }
         $out['plan_map'] = array();
         if (isset($in['plan_map']) && is_array($in['plan_map'])) {
             $tiers = array_keys(self::tiers());
@@ -225,6 +235,32 @@ class Boko_Accounts {
                 If someone holds more than one plan, the most generous one wins.</p>
                 <?php endif; ?>
 
+                <h2>Role mapping</h2>
+                <p>Grant a plan by WordPress role — for comps, staff and test accounts, or when you
+                assign a ProfilePress plan role by hand instead of taking a payment.
+                A role here counts the same as a paid subscription.</p>
+                <?php $all_roles = wp_roles()->get_names(); ?>
+                <table class="widefat striped" style="max-width:620px">
+                    <thead><tr><th>WordPress role</th><th>Slug</th><th>Maps to</th></tr></thead>
+                    <tbody>
+                    <?php foreach ($all_roles as $slug => $label) :
+                        $cur = isset($s['role_map'][$slug]) ? $s['role_map'][$slug] : ''; ?>
+                        <tr>
+                            <td><strong><?php echo esc_html($label); ?></strong></td>
+                            <td><code><?php echo esc_html($slug); ?></code></td>
+                            <td>
+                                <select name="<?php echo esc_attr(self::OPT); ?>[role_map][<?php echo esc_attr($slug); ?>]">
+                                    <option value="">— ignore —</option>
+                                    <?php foreach ($tiers as $key => $t) : ?>
+                                        <option value="<?php echo esc_attr($key); ?>" <?php selected($cur, $key); ?>><?php echo esc_html($t['label']); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+
                 <h2>Allowed app URLs</h2>
                 <p>One per line. Logins will only ever redirect back to these origins.</p>
                 <textarea name="<?php echo esc_attr(self::OPT); ?>[allowed_apps]" rows="4" style="width:520px" class="code"><?php
@@ -242,6 +278,7 @@ class Boko_Accounts {
                 <tr><td>Shared secret</td><td><?php echo $s['secret']
                     ? '<span style="color:#080">set</span>' : '<span style="color:#c00">missing — logins will fail</span>'; ?></td></tr>
                 <tr><td>Plans detected</td><td><?php echo count($plans); ?><?php echo $via ? ' <span class="description">(via ' . esc_html($via) . ')</span>' : ''; ?></td></tr>
+                <tr><td>Roles mapped</td><td><?php echo count($s['role_map']); ?></td></tr>
                 <tr><td>Plans mapped</td><td><?php echo count($s['plan_map']) ?: '<span style="color:#c00">0 — paid members will look Free</span>'; ?></td></tr>
                 <tr><td>Entitlement endpoint</td><td><code><?php echo esc_url(rest_url('boko-account/v1/me')); ?></code></td></tr>
                 <tr><td>Login URL</td><td><code><?php echo esc_url(home_url('/?boko_auth=1')); ?></code></td></tr>
@@ -286,21 +323,39 @@ class Boko_Accounts {
 
         $best = 'free';
         $matched_plan = null;
+        $granted_by = 'none';
+
+        // 1. A real ProfilePress subscription, or the per-plan capability it grants.
         foreach ((array) $s['plan_map'] as $plan_id => $tier) {
             if (!isset($tiers[$tier])) { continue; }
             $active = false;
             if (function_exists('ppress_has_active_subscription')) {
                 $active = (bool) ppress_has_active_subscription($user_id, intval($plan_id));
-            } elseif (function_exists('user_can')) {
+            }
+            if (!$active) {
                 $active = user_can($user_id, 'ppress_plan_' . intval($plan_id));
             }
             if ($active && $order[$tier] >= $order[$best]) {
                 $best = $tier;
                 $matched_plan = intval($plan_id);
+                $granted_by = 'subscription';
             }
         }
 
+        // 2. A mapped WordPress role. ProfilePress creates a role per plan, and
+        //    assigning it by hand is how comps, staff and test accounts are granted
+        //    without putting a fake payment through.
         $user = get_userdata($user_id);
+        $roles = ($user && is_array($user->roles)) ? $user->roles : array();
+        foreach ((array) $s['role_map'] as $role => $tier) {
+            if (!isset($tiers[$tier])) { continue; }
+            if (!in_array($role, $roles, true)) { continue; }
+            if ($order[$tier] >= $order[$best]) {
+                $best = $tier;
+                if ($granted_by === 'none') { $granted_by = 'role'; }
+            }
+        }
+
         $t = $tiers[$best];
         return array(
             'userId'  => intval($user_id),
@@ -309,6 +364,7 @@ class Boko_Accounts {
             'plan'    => $best,
             'planLabel' => $t['label'],
             'planId'  => $matched_plan,
+            'grantedBy' => $granted_by,
             'limits'  => array(
                 'stores'        => $t['stores'],
                 'itemsPerMonth' => $t['itemsPerMonth'],
