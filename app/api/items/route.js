@@ -3,6 +3,8 @@ import { getSession } from "@/lib/session";
 import { wpGet } from "@/lib/wp";
 import { applyGate } from "@/lib/gate";
 import { verifyLicense } from "@/lib/license";
+import { entitlementFromToken } from "@/lib/entitlement";
+import { getAccountSession } from "@/lib/account-session";
 
 export const dynamic = "force-dynamic";
 
@@ -38,8 +40,10 @@ export async function GET(request) {
     // Paid members (valid licence for this site) get everything unlocked;
     // otherwise the first FREE_LIMIT items across ALL types are free and the
     // rest are tagged `locked`. Order here decides which land in the free tier.
+    const account = getAccountSession(request);
+    const entitlement = entitlementFromToken(account && account.bokoToken);
     const member = verifyLicense(session.license, session.site);
-    const gate = applyGate([pages, posts, postCategories, products, productCategories], { member });
+    const gate = applyGate([pages, posts, postCategories, products, productCategories], { member, entitlement });
 
     return NextResponse.json({
       connected: true,
