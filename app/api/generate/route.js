@@ -21,7 +21,12 @@ export const dynamic = "force-dynamic";
  *   GEMINI_MODEL    optional, default "gemini-2.0-flash"
  */
 
-const TITLE_MIN = 50, TITLE_MAX = 60, DESC_MIN = 150, DESC_MAX = 160;
+// Generation aims for the IDEAL band, not merely the acceptable one, so
+// anything this produces passes the audit cleanly.
+// Audit bands live in lib/seo-audit.js: title ideal 50-60 (hard max 60),
+// description ideal 120-158 (hard max 160). We target the top of the
+// description band and cap at 158 so output is always inside "ideal".
+const TITLE_MIN = 50, TITLE_MAX = 60, DESC_MIN = 140, DESC_MAX = 158;
 
 const TYPE_WORD = {
   products: "product",
@@ -110,7 +115,7 @@ function buildPrompt({ title, context, store, typeWord }) {
     ``,
     `Rules:`,
     `- META TITLE: ${TITLE_MIN}-${TITLE_MAX} characters. Lead with the single most important keyword a real shopper would search for this ${typeWord}. Be specific and compelling — never generic. Add the brand "${store || ""}" at the end (after " | " or " – ") only if it still fits under ${TITLE_MAX} characters. No ALL CAPS, no quotes, no emojis, no clickbait.`,
-    `- META DESCRIPTION: ${DESC_MIN}-${DESC_MAX} characters. Naturally include the primary keyword plus one related term. Describe THIS specific ${typeWord} using real details from the content — no filler like "great value every day". End with a soft call to action that suits a ${typeWord} (e.g. "Shop now", "Discover the range", "Read more"). Australian English spelling.`,
+    `- META DESCRIPTION: ${DESC_MIN}-${DESC_MAX} characters (Google shows up to about 158). Naturally include the primary keyword plus one related term. Describe THIS specific ${typeWord} using real details from the content — no filler like "great value every day". End with a soft call to action that suits a ${typeWord} (e.g. "Shop now", "Discover the range", "Read more"). Australian English spelling.`,
     `- Never invent prices, discounts, guarantees or facts not present in the content.`,
     `- Stay within the character limits.`,
     ``,
@@ -173,7 +178,7 @@ async function aiGenerate(input) {
   if (metaDescription.length > DESC_MAX) metaDescription = trimWords(metaDescription, DESC_MAX);
 
   // Reject clearly unusable output so we fall back gracefully.
-  if (metaTitle.length < 15 || metaDescription.length < 60) return null;
+  if (metaTitle.length < 30 || metaDescription.length < 70) return null;
 
   return { metaTitle, metaDescription, source: "ai" };
 }
