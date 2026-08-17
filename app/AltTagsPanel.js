@@ -39,8 +39,6 @@ export default function AltTagsPanel({ platform, upgradeUrl, onToast }) {
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const [busyAll, setBusyAll] = useState(false);
-  const [licenseKey, setLicenseKey] = useState("");
-  const [licenseErr, setLicenseErr] = useState("");
   const loadedOnce = useRef(false);
 
   const deferredQuery = useDeferredValue(query);
@@ -197,30 +195,6 @@ export default function AltTagsPanel({ platform, upgradeUrl, onToast }) {
     toast("Reset every suggestion on this tab.");
   }, [toast]);
 
-  // Same licence flow as the meta tabs — a merchant who hits the image limit
-  // shouldn't have to go hunting for another tab to unlock.
-  const activateLicense = useCallback(async () => {
-    const key = licenseKey.trim();
-    if (!key) return;
-    setLicenseErr("");
-    try {
-      const res = await fetch("/api/license", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key }),
-      });
-      const d = await res.json().catch(() => ({}));
-      if (!res.ok || !d.active) throw new Error(d.error || "Invalid licence key.");
-      setLicenseKey("");
-      toast("Membership activated — everything unlocked.");
-      loadedOnce.current = false;
-      await load();
-      loadedOnce.current = true;
-    } catch (e) {
-      setLicenseErr(e.message || String(e));
-    }
-  }, [licenseKey, load, toast]);
-
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
   const pageItems = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
@@ -262,19 +236,10 @@ export default function AltTagsPanel({ platform, upgradeUrl, onToast }) {
             <a className="btn primary sm" href={gate.upgradeUrl || upgradeUrl} target="_blank" rel="noopener noreferrer">
               Upgrade with Boko ▸
             </a>
-            <div className="license-form">
-              <input
-                type="text"
-                value={licenseKey}
-                placeholder="Already purchased? Paste licence key"
-                aria-label="Licence key"
-                onChange={(e) => setLicenseKey(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") activateLicense(); }}
-              />
-              <button className="btn dark sm" onClick={activateLicense}>Unlock</button>
-            </div>
+            {!gate.signedIn && (
+              <a className="btn ghost sm" href="/api/auth/boko">Already a member? Sign in</a>
+            )}
           </div>
-          {licenseErr && <div className="license-err">⚠ {licenseErr}</div>}
         </div>
       )}
 
