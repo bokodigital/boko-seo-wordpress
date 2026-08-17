@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Boko Accounts
  * Description: Turns this WordPress site into the identity and entitlement provider for the Boko SEO Studio apps. Signs members in with their existing ProfilePress membership and tells each app which plan they are on and what limits apply. Install on boko.com.au only — this is NOT the client-site bridge plugin.
- * Version: 1.3.0
+ * Version: 1.4.0
  * Author: Boko Digital
  */
 
@@ -10,10 +10,11 @@ if (!defined('ABSPATH')) { exit; }
 
 class Boko_Accounts {
 
-    const VERSION      = '1.3.0';
+    const VERSION      = '1.4.0';
     const OPT          = 'boko_accounts_settings';
     const TOKEN_TTL    = 900;   // signed login token: 15 minutes
     const SESSION_TTL  = 86400; // app session token: 24h, then the app re-checks /me
+    const META_SITES   = 'boko_connected_sites'; // user meta: the sites their plan covers
 
     /** Tiers the apps understand. Keys are stable — don't rename without updating the apps. */
     public static function tiers() {
@@ -288,6 +289,15 @@ class Boko_Accounts {
                 if (!$u) {
                     echo '<div class="notice notice-error inline"><p>No user found for <code>' . esc_html($q) . '</code>.</p></div>';
                 } else {
+                    if (isset($_POST['boko_release_site']) && current_user_can('manage_options')
+                        && check_admin_referer('boko_release_' . $u->ID)) {
+                        $rk = sanitize_text_field(wp_unslash($_POST['boko_release_site']));
+                        if (self::release_site($u->ID, $rk)) {
+                            echo '<div class="notice notice-success inline"><p>Released <code>'
+                                . esc_html(self::site_label($rk)) . '</code>. That slot is free — the next site '
+                                . 'they connect will claim it.</p></div>';
+                        }
+                    }
                     $ent = self::entitlement_for($u->ID);
                     $why = array(
                         'subscription' => 'an active ProfilePress subscription (or its plan capability)',
@@ -331,6 +341,32 @@ class Boko_Accounts {
                                 . '<td>' . ($has ? '<strong style="color:#080">yes</strong>' : 'no') . '</td></tr>';
                         }
                         echo '</tbody></table>';
+                    }
+
+                    $sites = self::get_sites($u->ID);
+                    $limit = intval($ent['limits']['stores']);
+                    echo '<h4>Connected sites <span class="description">(' . count($sites) . ' of ' . $limit
+                        . ' used — shared across the Shopify and WordPress apps)</span></h4>';
+                    if (!$sites) {
+                        echo '<p class="description">None yet. The first site they connect in either app claims a slot.</p>';
+                    } else {
+                        echo '<table class="widefat striped" style="max-width:820px">'
+                            . '<thead><tr><th>Site</th><th>App</th><th>Claimed</th><th>Last used</th><th></th></tr></thead><tbody>';
+                        foreach ($sites as $rec) {
+                            echo '<tr><td><code>' . esc_html($rec['label']) . '</code></td>'
+                                . '<td>' . esc_html($rec['app']) . '</td>'
+                                . '<td>' . ($rec['claimed'] ? esc_html(date_i18n('j M Y', $rec['claimed'])) : '&mdash;') . '</td>'
+                                . '<td>' . ($rec['seen'] ? esc_html(human_time_diff($rec['seen']) . ' ago') : '&mdash;') . '</td>'
+                                . '<td><form method="post" action="" style="margin:0">';
+                            wp_nonce_field('boko_release_' . $u->ID);
+                            echo '<input type="hidden" name="boko_release_site" value="' . esc_attr($rec['key']) . '" />'
+                                . '<button type="submit" class="button button-small">Release</button>'
+                                . '</form></td></tr>';
+                        }
+                        echo '</tbody></table>';
+                        echo '<p class="description">Release a slot when a member has genuinely moved sites, mistyped a '
+                            . 'domain, or connected a dev store by accident. Their other site keeps working; the freed slot '
+                            . 'is claimed by the next site they connect.</p>';
                     }
                 }
             }
@@ -441,6 +477,130 @@ class Boko_Accounts {
         );
     }
 
+    /* --------------------------- connected sites ---------------------------- */
+    //
+    // A plan covers a fixed number of sites: Store Fix 1, Agency 10. The count is
+    // shared across BOTH apps — one Shopify store and one WordPress site is two
+    // sites, not one each. The first site a member connects claims a slot and
+    // keeps it; anything beyond the limit still works, but only on the free
+    // 10-item allowance, with a banner explaining why.
+    //
+    // Stored in user meta rather than in the app, so it survives cookie clearing,
+    // a new browser, and a move between the two apps.
+
+    /**
+     * Canonical identity for a connected site.
+     * "shopify:acme.myshopify.com" / "wordpress:acme.com.au/shop"
+     * Host is lowercased and de-www'd; a WordPress install in a subdirectory
+     * keeps its path, because that genuinely is a different site.
+     */
+    public static function normalise_site($app, $site) {
+        $app = strtolower(trim((string) $app));
+        if (!in_array($app, array('shopify', 'wordpress'), true)) { return ''; }
+        $raw = trim((string) $site);
+        if ($raw === '') { return ''; }
+        if (strpos($raw, '//') === false) { $raw = 'https://' . $raw; }
+        $p = wp_parse_url($raw);
+        $host = !empty($p['host']) ? strtolower($p['host']) : '';
+        if (!$host) { return ''; }
+        $host = preg_replace('/^www\./', '', $host);
+        // A non-default port is part of the identity — staging on :8080 is not
+        // the same site as production on the same host.
+        $port = isset($p['port']) ? intval($p['port']) : 0;
+        if ($port && $port !== 80 && $port !== 443) { $host .= ':' . $port; }
+        if ($app === 'shopify') { return 'shopify:' . $host; }
+        $path = isset($p['path']) ? rtrim($p['path'], '/') : '';
+        return 'wordpress:' . $host . $path;
+    }
+
+    /** Human-readable form of a site key, for the UI and admin. */
+    public static function site_label($key) {
+        $i = strpos((string) $key, ':');
+        return $i === false ? (string) $key : substr((string) $key, $i + 1);
+    }
+
+    public static function get_sites($user_id) {
+        $raw = get_user_meta(intval($user_id), self::META_SITES, true);
+        if (!is_array($raw)) { return array(); }
+        $out = array();
+        foreach ($raw as $rec) {
+            if (empty($rec['key'])) { continue; }
+            $out[] = array(
+                'key'     => (string) $rec['key'],
+                'app'     => isset($rec['app']) ? (string) $rec['app'] : '',
+                'label'   => isset($rec['label']) ? (string) $rec['label'] : self::site_label($rec['key']),
+                'claimed' => isset($rec['claimed']) ? intval($rec['claimed']) : 0,
+                'seen'    => isset($rec['seen']) ? intval($rec['seen']) : 0,
+            );
+        }
+        return $out;
+    }
+
+    private static function save_sites($user_id, $sites) {
+        update_user_meta(intval($user_id), self::META_SITES, array_values($sites));
+    }
+
+    /** Free a slot. Support/admin action — there is no self-service release. */
+    public static function release_site($user_id, $key) {
+        $sites = self::get_sites($user_id);
+        $kept = array();
+        foreach ($sites as $rec) {
+            if ($rec['key'] !== $key) { $kept[] = $rec; }
+        }
+        self::save_sites($user_id, $kept);
+        return count($kept) !== count($sites);
+    }
+
+    /**
+     * Claim a slot for a site, or report that the plan is already full.
+     * Idempotent: re-connecting a site the member already holds just touches it.
+     */
+    public static function claim_site($user_id, $app, $site) {
+        $ent   = self::entitlement_for($user_id);
+        $key   = self::normalise_site($app, $site);
+        $limit = intval($ent['limits']['stores']);
+        $sites = self::get_sites($user_id);
+        $now   = time();
+
+        $result = array(
+            'covered'   => false,
+            'siteKey'   => $key,
+            'siteLimit' => $limit,
+            'sites'     => $sites,
+        );
+
+        // Free members keep no registry — the 10-item allowance already limits
+        // them, and it should apply wherever they connect.
+        if ($ent['plan'] === 'free' || $key === '') {
+            return array_merge($ent, $result);
+        }
+
+        foreach ($sites as $i => $rec) {
+            if ($rec['key'] === $key) {
+                $sites[$i]['seen'] = $now;
+                self::save_sites($user_id, $sites);
+                $result['covered'] = true;
+                $result['sites'] = $sites;
+                return array_merge($ent, $result);
+            }
+        }
+
+        if (count($sites) < $limit) {
+            $sites[] = array(
+                'key'     => $key,
+                'app'     => $app,
+                'label'   => self::site_label($key),
+                'claimed' => $now,
+                'seen'    => $now,
+            );
+            self::save_sites($user_id, $sites);
+            $result['covered'] = true;
+            $result['sites'] = $sites;
+        }
+
+        return array_merge($ent, $result);
+    }
+
     /* ------------------------------ login flow ------------------------------ */
 
     private static function allowed_origin($url) {
@@ -507,6 +667,69 @@ class Boko_Accounts {
             'callback' => array(__CLASS__, 'route_ping'),
             'permission_callback' => '__return_true',
         ));
+        register_rest_route('boko-account/v1', '/sites', array(
+            array(
+                'methods'  => 'GET',
+                'callback' => array(__CLASS__, 'route_sites'),
+                'permission_callback' => '__return_true', // token-authenticated below
+            ),
+            array(
+                'methods'  => 'POST',
+                'callback' => array(__CLASS__, 'route_claim'),
+                'permission_callback' => '__return_true',
+            ),
+        ));
+    }
+
+    /** The member behind a request's bearer token, or a WP_Error. */
+    private static function user_from_request($request) {
+        $auth = $request->get_header('authorization');
+        $token = '';
+        if ($auth && preg_match('/Bearer\s+(.+)/i', $auth, $m)) { $token = trim($m[1]); }
+        if (!$token) { $token = (string) $request->get_param('token'); }
+
+        $data = self::verify_token($token);
+        if (!$data || empty($data['userId'])) {
+            return new WP_Error('boko_bad_token', 'Invalid or expired token. Sign in again.', array('status' => 401));
+        }
+        $uid = intval($data['userId']);
+        if (!get_userdata($uid)) {
+            return new WP_Error('boko_no_user', 'That account no longer exists.', array('status' => 401));
+        }
+        return $uid;
+    }
+
+    /** Attach a freshly rolled session token so one round trip refreshes everything. */
+    private static function with_token($payload) {
+        $payload['iss'] = home_url('/');
+        $payload['iat'] = time();
+        $payload['exp'] = time() + self::SESSION_TTL;
+        $payload['token'] = self::sign_payload($payload);
+        return $payload;
+    }
+
+    /** GET /wp-json/boko-account/v1/sites — which sites does this plan cover? */
+    public static function route_sites($request) {
+        $uid = self::user_from_request($request);
+        if (is_wp_error($uid)) { return $uid; }
+        $ent = self::entitlement_for($uid);
+        $ent['sites'] = self::get_sites($uid);
+        $ent['siteLimit'] = intval($ent['limits']['stores']);
+        return self::with_token($ent);
+    }
+
+    /**
+     * POST /wp-json/boko-account/v1/sites  { app: "shopify"|"wordpress", site: "..." }
+     * Claims a slot for that site if the plan has one spare, and reports back
+     * whether it is covered. Never errors on "full" — the app degrades the
+     * member to the free allowance for that site instead of locking them out.
+     */
+    public static function route_claim($request) {
+        $uid = self::user_from_request($request);
+        if (is_wp_error($uid)) { return $uid; }
+        $app  = (string) $request->get_param('app');
+        $site = (string) $request->get_param('site');
+        return self::with_token(self::claim_site($uid, $app, $site));
     }
 
     public static function route_ping() {
@@ -517,6 +740,7 @@ class Boko_Accounts {
             'profilepress' => function_exists('ppress_has_active_subscription'),
             'secretSet' => !empty($s['secret']),
             'plansMapped' => count($s['plan_map']),
+            'sitesApi' => true,
         );
     }
 
