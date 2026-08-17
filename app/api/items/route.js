@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { wpGet } from "@/lib/wp";
 import { applyGate } from "@/lib/gate";
-import { verifyLicense } from "@/lib/license";
 import { entitlementFromToken } from "@/lib/entitlement";
 import { getAccountSession } from "@/lib/account-session";
 
@@ -37,13 +36,12 @@ export async function GET(request) {
     const products = decorate("products", groups.products);
     const productCategories = decorate("productCategories", groups.productCategories);
 
-    // Paid members (valid licence for this site) get everything unlocked;
+    // Paid members get everything unlocked;
     // otherwise the first FREE_LIMIT items across ALL types are free and the
     // rest are tagged `locked`. Order here decides which land in the free tier.
     const account = getAccountSession(request);
     const entitlement = entitlementFromToken(account && account.bokoToken);
-    const member = verifyLicense(session.license, session.site);
-    const gate = applyGate([pages, posts, postCategories, products, productCategories], { member, entitlement });
+    const gate = applyGate([pages, posts, postCategories, products, productCategories], { entitlement });
 
     return NextResponse.json({
       connected: true,
