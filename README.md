@@ -42,7 +42,7 @@ clean, consistent API (`/wp-json/boko-seo/v1/...`) and maps meta to whichever SE
 2. https://vercel.com/new → **Import** the repo. Framework preset auto-detects **Next.js**.
 3. Add one **Environment Variable**:
    - `SESSION_SECRET` = a long random string (`openssl rand -hex 32`)
-   - `UPGRADE_URL` = *(optional)* where the free-tier **Upgrade** button links (defaults to `https://www.boko.com.au/upgrade`)
+   - `UPGRADE_URL` = *(optional)* where the free-tier **Upgrade** button links (defaults to `https://boko.com.au/ai-tools/seo-meta-studio-by-boko/`)
 4. **Deploy.**
 
 ### 4. Connect
@@ -86,6 +86,41 @@ Pages · Posts · Post categories · WooCommerce products* · WooCommerce produc
 Next.js 14 (App Router) · React 18 · WordPress REST (Application Passwords) · companion PHP plugin · Poppins via `next/font`.
 ---
 
+## Image alt tags
+
+The **Alt tags** tab scans the WordPress media library for images with **no alt text**
+(`_wp_attachment_image_alt` empty or missing) and writes one for each.
+
+- **How alt text is written:** free, rule-based — no AI key, no per-image cost. It uses the
+  attachment's caption if there is one; otherwise it combines the parent post/product title with
+  anything meaningful in the filename, falling back to a positional descriptor ("– alternate view",
+  "– side view") for WooCommerce gallery images. Junk filenames (`IMG_4821.JPG`, `DSC_0001`, hashes,
+  `-1024x768`, `-scaled`) are ignored rather than repeated back at the reader. Capped at 125 characters.
+- **When it can't guess:** if there's nothing usable in the parent title, caption or filename, the
+  card is flagged *"please describe this image yourself"* and left blank rather than saving filler.
+- **Review before saving:** every suggestion is editable. Save one at a time, or **Save all
+  suggestions** for everything visible on the tab.
+- **Large media libraries:** images load 100 at a time with a **Scan more images** button.
+
+### Requires Boko SEO Bridge v1.1.0
+
+Alt text lives on media attachments, which the v1.0.0 bridge didn't expose. **Re-upload
+`wp-plugin/boko-seo-bridge.php`** to `wp-content/plugins/boko-seo-bridge/` on every site using the
+Studio. Nothing else changes — the meta title/description flow is untouched, and a site still on
+v1.0.0 keeps working; only the Alt tags tab shows an "update the plugin" message.
+
+New endpoints in v1.1.0:
+
+| Endpoint | Method | Purpose |
+| --- | --- | --- |
+| `/wp-json/boko-seo/v1/images` | GET | Paginated list of image attachments with no alt text (`?offset=&limit=`) |
+| `/wp-json/boko-seo/v1/alt` | POST | Save alt text for one attachment (`{ id, alt }`) |
+
+Both require `manage_options`, same as the existing routes. `/ping` and `/items` now also return a
+`version` field so the app can detect an out-of-date plugin.
+
+---
+
 ## Free tier & upgrades (10-item limit)
 
 The Studio is free for the **first 10 items across all content types combined**
@@ -94,46 +129,21 @@ Once a connected site has **more than 10 items**, everything beyond the first 10
 is **locked**: those cards show an **Upgrade** button instead of Generate/Import,
 and "Generate all" / "Fix issues" / "Import all" only act on the free items.
 
-The limit is enforced both in the UI and on the server (`/api/generate` and
-`/api/import` return **HTTP 402** for locked items), so it can't be bypassed by
-the buttons alone.
+The limit is enforced both in the UI and on the server (`/api/generate`,
+`/api/import` and `/api/alt` return **HTTP 402** for locked items), so it can't be
+bypassed by the buttons alone.
 
-- **Where the count is decided:** `/api/items` tags each item `locked` in a fixed
-  order and returns a `gate` object (`{ total, freeLimit, locked, lockedCount, upgradeUrl }`).
+Image alt tags have their **own separate allowance of 10 images** — a site has far
+more images than pages, so counting them in the same pool would exhaust the free
+tier instantly. `/api/images` carries the running count across pages via the
+`loaded` query param, so the allowance isn't handed out again per page.
+
+- **Where the count is decided:** `/api/items` (meta) and `/api/images` (alt tags)
+  tag each item `locked` in a fixed order and return a `gate` object
+  (`{ total, freeLimit, locked, lockedCount, upgradeUrl }`).
 - **Change the free limit:** edit `FREE_LIMIT` in `lib/gate.js`.
 - **Where "Upgrade" links to:** set the optional env var **`UPGRADE_URL`**
-  (defaults to `https://www.boko.com.au/upgrade`). Point it at your Boko upgrade /
+  (defaults to `https://boko.com.au/ai-tools/seo-meta-studio-by-boko/`). Point it at your Boko upgrade /
   checkout / enquiry page.
 ---
 
-## Membership (one-time unlock via licence key)
-
-Paid customers unlock the full item set with a **licence key** — no database and no
-login. A key is an HMAC signature bound to the customer's connected domain, so a key
-issued for one site/store can't be reused on another.
-
-**Setup (once):**
-
-- Set a strong `LICENSE_SECRET` env var on this app's Vercel deployment
-  (`openssl rand -hex 32`). Keep it private. If it's unset, no key can ever validate
-  (the gate stays closed).
-
-**Issuing a key (after a customer's one-time Stripe purchase):**
-
-```bash
-LICENSE_SECRET=<same value as Vercel> node tools/generate-license.mjs <their-domain>
-# e.g. node tools/generate-license.mjs their-store.myshopify.com
-```
-
-Give the printed key to the customer.
-
-**Customer redeems it:** in the app, once they're over the free limit, they paste the
-key into the **"Already purchased? Paste licence key"** box and click **Unlock**. The
-server (`/api/license`) verifies it against the domain they're actually connected to,
-stores it in their encrypted session, and every item unlocks. The check is re-run on
-each request (`/api/items`), so it can't be faked by editing the page.
-**Internal team unlock (Boko):** set `INTERNAL_UNLOCK_KEY` on Vercel to any strong
-shared secret. Anyone who pastes that exact value into the licence box unlocks the
-app on **any** connected site/store — no per-domain key needed. Use it for internal
-work across client sites; keep it private and rotate it if it leaks. Leave it unset
-to disable internal unlock entirely.
