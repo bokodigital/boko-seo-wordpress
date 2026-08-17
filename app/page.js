@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, useCallback, useDeferredValue } from "rea
 
 import AltTagsPanel from "./AltTagsPanel";
 import AccountBar from "./AccountBar";
+import SiteNotice from "./SiteNotice";
 import { auditItem, counterClass, LIMITS } from "@/lib/seo-audit";
 
 const PAGE_SIZE = 10;
@@ -331,6 +332,11 @@ export default function Page() {
 
           {!isAltTab && (
             <>
+            <SiteNotice
+              notice={gate && gate.siteNotice}
+              upgradeUrl={gate ? gate.upgradeUrl : "https://boko.com.au/ai-tools/seo-meta-studio-by-boko/"}
+            />
+
             {gate && gate.member && (
               <div className="member-banner">✓ {gate.planLabel && gate.planLabel !== "Free" ? gate.planLabel + " plan" : "Membership"} active — all {gate.total} items are unlocked.</div>
             )}
@@ -338,7 +344,12 @@ export default function Page() {
             {gate && gate.locked && (
               <div className="upgrade-banner">
                 <div className="upgrade-copy">
-                  <b>You&apos;re on the free plan.</b> The first {gate.freeLimit} items are free to optimise.{" "}
+                  <b>
+                    {gate.siteNotice
+                      ? "This " + "site" + " is on the free allowance."
+                      : "You\u2019re on the free plan."}
+                  </b>{" "}
+                  The first {gate.freeLimit} items are free to optimise.{" "}
                   {gate.lockedCount} more {gate.lockedCount === 1 ? "item is" : "items are"} locked across your site.
                 </div>
                 <div className="upgrade-actions">

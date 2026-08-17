@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useDeferredValue } from "react";
 import { ALT_MAX, auditAlt, altCounterClass } from "@/lib/seo-audit";
+import SiteNotice from "./SiteNotice";
 
 const PAGE_SIZE = 12;
 
@@ -223,13 +224,20 @@ export default function AltTagsPanel({ platform, upgradeUrl, onToast }) {
 
   return (
     <>
+      <SiteNotice notice={gate && gate.siteNotice} upgradeUrl={(gate && gate.upgradeUrl) || upgradeUrl} />
+
       {gate && gate.member && (
         <div className="member-banner">✓ Membership active — every image is unlocked.</div>
       )}
       {gate && gate.locked && (
         <div className="upgrade-banner">
           <div className="upgrade-copy">
-            <b>You&apos;re on the free plan.</b> The first {gate.freeLimit} images are free to fix.{" "}
+            <b>
+              {gate.siteNotice
+                ? "This " + "site" + " is on the free allowance."
+                : "You\u2019re on the free plan."}
+            </b>{" "}
+            The first {gate.freeLimit} images are free to fix.{" "}
             {gate.lockedCount} more {gate.lockedCount === 1 ? "image is" : "images are"} locked.
           </div>
           <div className="upgrade-actions">
