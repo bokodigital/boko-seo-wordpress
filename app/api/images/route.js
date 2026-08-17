@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { wpGet } from "@/lib/wp";
 import { applyGate } from "@/lib/gate";
-import { entitlementFromToken } from "@/lib/entitlement";
-import { getAccountSession } from "@/lib/account-session";
+import { gateContext } from "@/lib/sites";
+import { persistGate } from "@/lib/account-session";
 import { suggestAlt } from "@/lib/alt-text";
 
 export const dynamic = "force-dynamic";
@@ -82,11 +82,10 @@ export async function GET(request) {
     const d = await wpGet(session, `/images?offset=${offset}&limit=${limit}`);
     const images = (d.images || []).map(decorate);
 
-    const account = getAccountSession(request);
-    const entitlement = entitlementFromToken(account && account.bokoToken);
-    const gate = applyGate([images], { entitlement, startAt: alreadyLoaded });
+    const ctx = await gateContext(request, session);
+    const gate = applyGate([images], { site: ctx, startAt: alreadyLoaded });
 
-    return NextResponse.json({
+    const res = NextResponse.json({
       connected: true,
       images,
       total: Number(d.total) || images.length,
@@ -94,6 +93,7 @@ export async function GET(request) {
       bridgeVersion: d.version || "1.0.0",
       gate,
     });
+    return persistGate(res, ctx);
   } catch (e) {
     if (e && e.status === 404) {
       return NextResponse.json({ error: NEEDS_UPDATE, needsPluginUpdate: true }, { status: 409 });
