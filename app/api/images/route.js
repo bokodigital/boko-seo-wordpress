@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { wpGet } from "@/lib/wp";
 import { applyGate } from "@/lib/gate";
-import { verifyLicense } from "@/lib/license";
 import { entitlementFromToken } from "@/lib/entitlement";
 import { getAccountSession } from "@/lib/account-session";
 import { suggestAlt } from "@/lib/alt-text";
@@ -85,8 +84,7 @@ export async function GET(request) {
 
     const account = getAccountSession(request);
     const entitlement = entitlementFromToken(account && account.bokoToken);
-    const member = verifyLicense(session.license, session.site);
-    const gate = applyGate([images], { member, entitlement, startAt: alreadyLoaded });
+    const gate = applyGate([images], { entitlement, startAt: alreadyLoaded });
 
     return NextResponse.json({
       connected: true,
