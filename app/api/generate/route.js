@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { FREE_LIMIT, upgradeUrl } from "@/lib/gate";
+import { buildMetaTitle, guessKeyword } from "@/lib/meta-title";
 
 export const dynamic = "force-dynamic";
 
@@ -11,14 +12,19 @@ export const dynamic = "force-dynamic";
  *   IN : { type, title, handle?, context, store }
  *   OUT: { metaTitle, metaDescription, source }   ("source" is "ai" or "rules")
  *
- * - When GEMINI_API_KEY is set, titles/descriptions are written by the model,
- *   keyword-led and specific to each item.
+ * - Meta titles always take the shape "Page title | Keyword | Site name",
+ *   sentence case, "|" separators — assembled by lib/meta-title.js whichever
+ *   path produced the parts, so the format can't drift.
+ * - When GEMINI_API_KEY is set, the keyword and description are written by the
+ *   model, specific to each item.
  * - When the key is missing, or the AI call errors/times out, it falls back to
  *   the original free, rule-based logic so the app never breaks.
  *
  * Env:
  *   GEMINI_API_KEY  required for AI. Free key: https://aistudio.google.com/apikey
- *   GEMINI_MODEL    optional, default "gemini-2.0-flash"
+ *   GEMINI_MODEL    optional. Tried first, then "gemini-flash-latest" (Google's
+ *                   auto-updating alias), then "gemini-2.5-flash" — so a
+ *                   retired model name can't silently switch AI off again.
  */
 
 // Generation aims for the IDEAL band, not merely the acceptable one, so
@@ -26,7 +32,7 @@ export const dynamic = "force-dynamic";
 // Audit bands live in lib/seo-audit.js: title ideal 50-60 (hard max 60),
 // description ideal 120-158 (hard max 160). We target the top of the
 // description band and cap at 158 so output is always inside "ideal".
-const TITLE_MIN = 50, TITLE_MAX = 60, DESC_MIN = 140, DESC_MAX = 158;
+const TITLE_MAX = 60, DESC_MIN = 140, DESC_MAX = 158;
 
 const TYPE_WORD = {
   products: "product",
@@ -53,24 +59,16 @@ function trimWords(s, max) {
 
 /* ----------------------------- rule-based (fallback) ----------------------------- */
 
-function makeTitle(title, store) {
-  const base = clean(title);
-  if (base.length >= TITLE_MIN && base.length <= TITLE_MAX) return base;
-  if (base.length > TITLE_MAX) return trimWords(base, TITLE_MAX);
-
-  const tails = store
-    ? [` | ${store}`, ` – Shop ${store}`, ` | ${store} Online Store`, ` – Buy Online at ${store}`]
-    : [` | Shop Online`, ` – Buy Online Today`, ` | Free Shipping & Returns`];
-
-  let best = base;
-  for (const t of tails) {
-    const cand = base + t;
-    if (cand.length <= TITLE_MAX) {
-      if (cand.length >= TITLE_MIN) return cand;
-      if (cand.length > best.length) best = cand;
-    }
-  }
-  return best;
+// "Page title | Keyword | Site name". Without AI the keyword is the phrase the
+// page's own copy repeats most; if it repeats nothing useful, the keyword slot
+// is left out rather than filled with something made up.
+function makeTitle(title, store, context) {
+  return buildMetaTitle({
+    page: title,
+    keyword: guessKeyword({ title, context }),
+    site: store,
+    context,
+  });
 }
 
 function makeDesc(context, title, store, typeWord) {
@@ -99,7 +97,7 @@ function makeDesc(context, title, store, typeWord) {
 
 function ruleBased({ title, context, store, typeWord }) {
   return {
-    metaTitle: makeTitle(title || "", store || ""),
+    metaTitle: makeTitle(title || "", store || "", context || ""),
     metaDescription: makeDesc(context || "", title || "", store || "", typeWord),
     source: "rules",
   };
@@ -111,13 +109,17 @@ function buildPrompt({ title, context, store, typeWord }) {
   const ctx = clean(context).slice(0, 1400);
   return [
     `You are an expert SEO copywriter${store ? ` for the brand "${store}"` : ""}.`,
-    `Write ONE Google-search-optimised meta title and ONE meta description for the ${typeWord} below.`,
+    `For the ${typeWord} below, write the parts of its meta title, and its meta description.`,
+    ``,
+    `The meta title is assembled as:  PAGE TITLE | KEYWORD | ${store || "SITE NAME"}`,
+    `and must fit in ${TITLE_MAX} characters in total, so keep the parts short.`,
     ``,
     `Rules:`,
-    `- META TITLE: ${TITLE_MIN}-${TITLE_MAX} characters. Lead with the single most important keyword a real shopper would search for this ${typeWord}. Be specific and compelling — never generic. Add the brand "${store || ""}" at the end (after " | " or " – ") only if it still fits under ${TITLE_MAX} characters. No ALL CAPS, no quotes, no emojis, no clickbait.`,
-    `- META DESCRIPTION: ${DESC_MIN}-${DESC_MAX} characters (Google shows up to about 158). Naturally include the primary keyword plus one related term. Describe THIS specific ${typeWord} using real details from the content — no filler like "great value every day". End with a soft call to action that suits a ${typeWord} (e.g. "Shop now", "Discover the range", "Read more"). Australian English spelling.`,
-    `- Never invent prices, discounts, guarantees or facts not present in the content.`,
-    `- Stay within the character limits.`,
+    `- pageTitle: the name of this ${typeWord}, as a shopper would recognise it. Use the item's own title; shorten it only if it is longer than about 28 characters. Do not include the brand name.`,
+    `- keyword: the single search phrase (2-4 words) a real customer would type into Google to find this ${typeWord}. Must add something the page title doesn't already say — never repeat it. Do not include the brand name.`,
+    `- Write pageTitle and keyword in sentence case: only the first letter capitalised, everything else lowercase, EXCEPT proper nouns (brands, places, product names like iPhone) and acronyms (SEO, AI). Never Title Case.`,
+    `- metaDescription: ${DESC_MIN}-${DESC_MAX} characters (Google shows up to about 158). Naturally include the keyword plus one related term. Describe THIS specific ${typeWord} using real details from the content — no filler like "great value every day". End with a soft call to action that suits a ${typeWord} (e.g. "Shop now", "Discover the range", "Read more"). Australian English spelling.`,
+    `- No quotes, no emojis, no ALL CAPS, no clickbait. Never invent prices, discounts, guarantees or facts not present in the content.`,
     ``,
     `ITEM`,
     `Type: ${typeWord}`,
@@ -127,12 +129,34 @@ function buildPrompt({ title, context, store, typeWord }) {
   ].filter(Boolean).join("\n");
 }
 
+// gemini-2.0-flash was the old default. Once Google retired it every request
+// 404'd and the app quietly fell back to rule-based titles for everything.
+// Trying an alias next means a retired name degrades to "slightly different
+// model", not "no AI".
+function modelsToTry() {
+  const list = [process.env.GEMINI_MODEL, "gemini-flash-latest", "gemini-2.5-flash"];
+  return [...new Set(list.map((m) => String(m || "").trim()).filter(Boolean))];
+}
+
+async function callGemini(model, key, payload) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12000);
+  try {
+    return await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function aiGenerate(input) {
   const key = process.env.GEMINI_API_KEY;
   if (!key) return null;
-
-  const model = process.env.GEMINI_MODEL || "gemini-2.0-flash";
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
 
   const payload = {
     contents: [{ role: "user", parts: [{ text: buildPrompt(input) }] }],
@@ -142,43 +166,45 @@ async function aiGenerate(input) {
       responseSchema: {
         type: "OBJECT",
         properties: {
-          metaTitle: { type: "STRING" },
+          pageTitle: { type: "STRING" },
+          keyword: { type: "STRING" },
           metaDescription: { type: "STRING" },
         },
-        required: ["metaTitle", "metaDescription"],
+        required: ["pageTitle", "keyword", "metaDescription"],
       },
     },
   };
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 12000);
   let res;
-  try {
-    res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timeout);
+  for (const model of modelsToTry()) {
+    res = await callGemini(model, key, payload);
+    // 404 = unknown or retired model name: try the next one. Anything else
+    // (bad key, quota, a real answer) is final.
+    if (res.status !== 404) break;
+    console.error(`Gemini model "${model}" not found, trying the next one`);
   }
 
-  if (!res.ok) throw new Error(`Gemini ${res.status}`);
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Gemini ${res.status} ${detail.slice(0, 200)}`);
+  }
   const data = await res.json();
   const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!text) throw new Error("Empty AI response");
 
   const parsed = JSON.parse(text);
-  let metaTitle = clean(parsed.metaTitle);
+  // The model writes the parts; the shape and casing are enforced here.
+  const metaTitle = buildMetaTitle({
+    page: clean(parsed.pageTitle) || input.title,
+    keyword: clean(parsed.keyword),
+    site: input.store,
+    context: input.context,
+  });
   let metaDescription = clean(parsed.metaDescription);
-
-  // Enforce hard max lengths; keep AI copy otherwise.
-  if (metaTitle.length > TITLE_MAX) metaTitle = trimWords(metaTitle, TITLE_MAX);
   if (metaDescription.length > DESC_MAX) metaDescription = trimWords(metaDescription, DESC_MAX);
 
   // Reject clearly unusable output so we fall back gracefully.
-  if (metaTitle.length < 30 || metaDescription.length < 70) return null;
+  if (!metaTitle || metaDescription.length < 70) return null;
 
   return { metaTitle, metaDescription, source: "ai" };
 }
