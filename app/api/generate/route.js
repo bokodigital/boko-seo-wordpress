@@ -234,13 +234,21 @@ export async function POST(request) {
   const typeWord = TYPE_WORD[type] || "page";
   const input = { title: title || "", context: context || "", store: store || "", typeWord };
 
+  // aiStatus says why the rule-based fallback was used, so "the titles look
+  // generic" can be diagnosed from the browser. It carries the HTTP status and
+  // Google's short error reason only — never the key or the prompt.
+  let aiStatus = process.env.GEMINI_API_KEY ? "" : "no-key";
   try {
     const ai = await aiGenerate(input);
     if (ai) return NextResponse.json(ai);
+    if (!aiStatus) aiStatus = "unusable-output";
   } catch (e) {
-    // Swallow and fall back to rule-based below.
-    console.error("AI meta generation failed, falling back to rules:", e?.message || e);
+    const msg = String((e && e.message) || e);
+    console.error("AI meta generation failed, falling back to rules:", msg);
+    const m = msg.match(/^Gemini (\d{3})/);
+    const reason = (msg.match(/"status":\s*"([A-Z_]+)"/) || [])[1] || "";
+    aiStatus = m ? `http-${m[1]}${reason ? " " + reason : ""}` : e && e.name === "AbortError" ? "timeout" : "error";
   }
 
-  return NextResponse.json(ruleBased(input));
+  return NextResponse.json({ ...ruleBased(input), aiStatus });
 }
