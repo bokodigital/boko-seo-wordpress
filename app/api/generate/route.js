@@ -3,6 +3,8 @@ import { FREE_LIMIT, upgradeUrl } from "@/lib/gate";
 import { buildMetaTitle, guessKeyword } from "@/lib/meta-title";
 
 export const dynamic = "force-dynamic";
+// Room to try a second or third model when the first is overloaded.
+export const maxDuration = 60;
 
 /**
  * AI-powered meta generation (Google Gemini) with a rule-based fallback.
@@ -22,9 +24,10 @@ export const dynamic = "force-dynamic";
  *
  * Env:
  *   GEMINI_API_KEY  required for AI. Free key: https://aistudio.google.com/apikey
- *   GEMINI_MODEL    optional. Tried first, then "gemini-flash-latest" (Google's
- *                   auto-updating alias), then "gemini-2.5-flash" — so a
- *                   retired model name can't silently switch AI off again.
+ *   GEMINI_MODEL    optional. Tried first, then gemini-2.5-flash,
+ *                   gemini-flash-latest (Google's auto-updating alias) and
+ *                   gemini-2.5-flash-lite — so a retired or overloaded model
+ *                   can't silently switch AI off again.
  */
 
 // Generation aims for the IDEAL band, not merely the acceptable one, so
@@ -129,19 +132,23 @@ function buildPrompt({ title, context, store, typeWord }) {
   ].filter(Boolean).join("\n");
 }
 
-// gemini-2.0-flash was the old default. Once Google retired it every request
-// 404'd and the app quietly fell back to rule-based titles for everything.
-// Trying an alias next means a retired name degrades to "slightly different
-// model", not "no AI".
+// Production was quietly falling back to rule-based titles on every request:
+// the model it called answered 503 UNAVAILABLE (overloaded). A single model is
+// a single point of failure, so walk a short list until one answers.
 function modelsToTry() {
-  const list = [process.env.GEMINI_MODEL, "gemini-flash-latest", "gemini-2.5-flash"];
+  const list = [
+    process.env.GEMINI_MODEL,
+    "gemini-2.5-flash",
+    "gemini-flash-latest",
+    "gemini-2.5-flash-lite",
+  ];
   return [...new Set(list.map((m) => String(m || "").trim()).filter(Boolean))];
 }
 
 async function callGemini(model, key, payload) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 12000);
+  const timeout = setTimeout(() => controller.abort(), 9000);
   try {
     return await fetch(url, {
       method: "POST",
@@ -175,14 +182,24 @@ async function aiGenerate(input) {
     },
   };
 
-  let res;
+  // Move on to the next model when this one is missing (404), rate-limited
+  // (429), overloaded (5xx) or too slow. A bad key (400/403) fails the same way
+  // on every model, so that stops straight away.
+  let res = null;
+  let lastErr = null;
   for (const model of modelsToTry()) {
-    res = await callGemini(model, key, payload);
-    // 404 = unknown or retired model name: try the next one. Anything else
-    // (bad key, quota, a real answer) is final.
-    if (res.status !== 404) break;
-    console.error(`Gemini model "${model}" not found, trying the next one`);
+    try {
+      res = await callGemini(model, key, payload);
+    } catch (e) {
+      lastErr = e;
+      res = null;
+      console.error(`Gemini model "${model}" timed out, trying the next one`);
+      continue;
+    }
+    if (res.ok || !(res.status === 404 || res.status === 429 || res.status >= 500)) break;
+    console.error(`Gemini model "${model}" returned ${res.status}, trying the next one`);
   }
+  if (!res) throw lastErr || new Error("Gemini unreachable");
 
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
