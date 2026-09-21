@@ -161,8 +161,10 @@ async function callGemini(model, key, payload) {
   }
 }
 
-// The Flash models this key can call, newest stable first. Only used when
-// every model we name has been retired, so it costs nothing normally.
+// The Flash models this key can call, newest stable first. Only consulted
+// when none of the named models answered, so it costs nothing normally.
+// (By Sept 2026 the 2.5 models were retired and the "latest" alias was
+// returning 503 — this is what keeps AI on through that kind of churn.)
 async function discoverFlashModels(key) {
   try {
     const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=${key}`);
@@ -205,8 +207,7 @@ async function aiGenerate(input) {
 
   // Move on to the next model when this one is missing (404), rate-limited
   // (429), overloaded (5xx) or too slow. A bad key (400/403) fails the same way
-  // on every model, so that stops straight away. If every named model is
-  // missing, ask Google which Flash models this key can actually use.
+  // on every model, so that stops straight away.
   const trace = [];
   let res = null;
   let lastErr = null;
@@ -227,7 +228,9 @@ async function aiGenerate(input) {
   for (const model of modelsToTry()) {
     if ((done = await attempt(model))) break;
   }
-  if (!done && trace.every((t) => t.endsWith(":404"))) {
+  // Nothing answered (retired names, an overloaded alias): ask Google which
+  // Flash models this key can use right now and try those.
+  if (!done && !trace.some((t) => /:(400|401|403)$/.test(t))) {
     for (const model of await discoverFlashModels(key)) {
       if (trace.some((t) => t.startsWith(model + ":"))) continue;
       if ((done = await attempt(model))) break;
